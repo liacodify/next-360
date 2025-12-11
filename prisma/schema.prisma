@@ -1,0 +1,123 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// --------------------------------------
+
+model User {
+  id             Int      @id @default(autoincrement())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  name           String?
+  email          String   @unique
+  hashedPassword String?
+  role           String   @default("USER")
+
+  tokens      Token[]
+  sessions    Session[]
+  PointMarker PointMarker[]
+}
+
+model Session {
+  id                 Int       @id @default(autoincrement())
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  expiresAt          DateTime?
+  handle             String    @unique
+  hashedSessionToken String?
+  antiCSRFToken      String?
+  publicData         String?
+  privateData        String?
+
+  user   User? @relation(fields: [userId], references: [id])
+  userId Int?
+}
+
+model Token {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  hashedToken String
+  type        String
+  // See note below about TokenType enum
+  // type        TokenType
+  expiresAt   DateTime
+  sentTo      String
+
+  user   User @relation(fields: [userId], references: [id])
+  userId Int
+
+  @@unique([hashedToken, type])
+}
+
+model Project {
+  id          Int           @id @default(autoincrement())
+  name        String
+  File        File[]
+  PointMarker PointMarker[]
+}
+
+model File {
+  id         Int        @id @default(autoincrement())
+  fileName   String
+  filePath   String
+  duration   Float
+  startPlace String
+  gpsPoints  GpsPoint[]
+
+  tags Int[]
+
+  projectId Int?
+  project   Project? @relation(fields: [projectId], references: [id])
+}
+
+model Marker {
+  id          Int           @id @default(autoincrement())
+  name        String
+  icon        String
+  PointMarker PointMarker[]
+}
+
+model GpsPoint {
+  id              Int   @id @default(autoincrement())
+  lat             Float
+  lon             Float
+  second          Float
+  segmentDistance Float
+  totalDistance   Float
+
+  fileId Int
+  file   File? @relation(fields: [fileId], references: [id])
+}
+
+model PointMarker {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  lat       Float?
+  lon       Float?
+  comment   String
+  urlFile   String?
+  Tags      Int[]
+
+  markerId    Int?
+  projectId   Int?
+  parentId    Int?
+  createdById Int
+
+  project Project?      @relation(fields: [projectId], references: [id])
+  user    User          @relation(fields: [createdById], references: [id])
+  marker  Marker?       @relation(fields: [markerId], references: [id])
+  parent  PointMarker?  @relation("Replies", fields: [parentId], references: [id])
+  replies PointMarker[] @relation("Replies")
+}
+
+model Tag {
+  id    Int     @id @default(autoincrement())
+  name  String
+  color String?
+}

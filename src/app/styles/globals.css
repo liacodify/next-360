@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+.leaflet-tooltip.tooltip-interactive {
+  pointer-events: auto !important; /* permite hacer clic dentro del tooltip */
+}
+
+/* Fuerza scroll en el contenido de cada panel del PanelMenu */
+.panelmenu-scroll .p-panelmenu-panel .p-panelmenu-content,
+.panelmenu-scroll .p-submenu-list {
+  max-height: 220px !important; /* ajusta según quieras */
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch;
+}
