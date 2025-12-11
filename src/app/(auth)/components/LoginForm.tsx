@@ -132,15 +132,6 @@ export const LoginForm = () => {
           )}
         </div>
 
-        <div className="flex justify-end">
-          <Link
-            href="/forgot-password"
-            className="text-sm text-indigo-600 hover:underline font-medium"
-          >
-            ¿Olvidaste tu contraseña?
-          </Link>
-        </div>
-
         <Button
           label="Iniciar sesión"
           type="submit"
