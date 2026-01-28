@@ -34,24 +34,11 @@ services:
     depends_on:
       - postgres
       - minio
-    environment:
-      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/nextdb"
-
-      S3_ENDPOINT: "http://minio:9000"
-      S3_REGION: "us-east-1"
-      S3_BUCKET_NAME: "uploads"
-
-      AWS_ACCESS_KEY_ID: "minioadmin"
-      AWS_SECRET_ACCESS_KEY: "minioadmin123"
-
-      NEXTAUTH_SECRET: "una_clave_super_segura_y_larga_que_generes"
-      NEXTAUTH_URL: "http://localhost:3002"
-
-      NODE_ENV: "production"
+    env_file:
+      - .env
     ports:
       - "3002:3000"
     restart: always
-
 volumes:
   postgres_data:
   minio_data:
