@@ -6,6 +6,8 @@ export const s3 = new S3Client({
     accessKeyId: process.env.MYAPP_AWS_ACCESS_KEY_ID!,
     secretAccessKey: process.env.MYAPP_AWS_SECRET_ACCESS_KEY!,
   },
+
+  forcePathStyle: true,
 });
 
 export async function getFileContent(key: string): Promise<string> {
