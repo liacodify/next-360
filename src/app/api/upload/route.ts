@@ -311,28 +311,3 @@ export async function PUT(req: Request) {
     );
   }
 }
-
-export async function DELETE(req: Request) {
-  try {
-    const { id } = await req.json();
-
-    if (!id) {
-      return NextResponse.json(
-        { error: "ID is required for update" },
-        { status: 400 },
-      );
-    }
-
-    await db.gpsPoint.deleteMany({
-      where: { fileId: id },
-    });
-
-    await db.file.delete(id);
-  } catch (error) {
-    console.error("Error:", error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unknown error" },
-      { status: 500 },
-    );
-  }
-}

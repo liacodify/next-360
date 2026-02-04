@@ -92,7 +92,7 @@ export default function GalleryTable({
       acceptLabel: "Sí",
       rejectLabel: "No",
       accept: async () => {
-        await fetch(`/api/file/${fileId}`, { method: "DELETE" });
+        await fetch(`/api/upload/${fileId}`, { method: "DELETE" });
         await fetchFiles();
       },
     });
