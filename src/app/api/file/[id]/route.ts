@@ -3,9 +3,9 @@ import db from "@/lib/db";
 
 export async function GET(
   request: NextRequest,
-  context: { params: Promise<{ id: string }> }, // params es Promise
+  context: { params: Promise<{ id: string }> },
 ) {
-  const params = await context.params; // await para "desempaquetar"
+  const params = await context.params;
   const id = Number(params.id);
   if (isNaN(id)) {
     return NextResponse.json({ error: "ID inválido" }, { status: 400 });
@@ -35,7 +35,6 @@ export async function GET(
       );
     }
 
-    // Obtener tags relacionados
     const tags = await db.tag.findMany({
       where: {
         id: {
@@ -44,7 +43,6 @@ export async function GET(
       },
     });
 
-    // Devolver archivo con tags
     return NextResponse.json({ ...file, tags });
   } catch (error) {
     console.error("Error fetching file:", error);

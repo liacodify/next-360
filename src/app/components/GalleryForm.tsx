@@ -30,7 +30,7 @@ type VideoForm = z.infer<typeof videoSchema>;
 
 type Props = {
   initialData?: Partial<VideoForm>;
-  onCloseModal?: () => void; // función para cerrar modal
+  onCloseModal?: () => void;
 };
 
 type Project = { id: number; name: string };

@@ -1,33 +1,44 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { Button } from "primereact/button"
-import { Dialog } from "primereact/dialog"
-import GalleryForm from "../../components/GalleryForm"
-import GalleryTable from "../../components/GalleryTable"
+import { useState } from "react";
+import { Button } from "primereact/button";
+import { Dialog } from "primereact/dialog";
+import GalleryForm from "../../components/GalleryForm";
+import GalleryTable from "../../components/GalleryTable";
 
 export default function GalleryPage() {
-  const [modalOpen, setModalOpen] = useState(false)
-  const [editingData, setEditingData] = useState<any | null>(null)
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingData, setEditingData] = useState<any | null>(null);
 
   const openCreate = () => {
-    setEditingData(null) // para crear nuevo sin datos
-    setModalOpen(true)
-  }
+    setEditingData(null);
+    setModalOpen(true);
+  };
 
   const openEdit = (data: any) => {
-    setEditingData(data)
-    setModalOpen(true)
-  }
+    setEditingData(data);
+    setModalOpen(true);
+  };
 
+  const [reloadSignal, setReloadSignal] = useState(0);
+
+  const handleSaved = () => {
+    setModalOpen(false);
+    setReloadSignal((prev) => prev + 1);
+  };
   return (
     <div className="flex w-full flex-col h-full p-2">
       <div className="flex justify-between items-center mb-4">
         <h1 className="text-2xl font-bold">Galeria</h1>
-        <Button size="small" label="Nuevo Elemento" icon="pi pi-plus" onClick={openCreate} />
+        <Button
+          size="small"
+          label="Nuevo Elemento"
+          icon="pi pi-plus"
+          onClick={openCreate}
+        />
       </div>
 
-      <GalleryTable onEdit={openEdit} />
+      <GalleryTable reloadSignal={reloadSignal} onEdit={openEdit} />
 
       <Dialog
         header={editingData ? "Editar Elemento" : "Nuevo Elemento"}
@@ -36,8 +47,11 @@ export default function GalleryPage() {
         modal
         onHide={() => setModalOpen(false)}
       >
-        <GalleryForm initialData={editingData || undefined} />
+        <GalleryForm
+          initialData={editingData || undefined}
+          onCloseModal={handleSaved}
+        />
       </Dialog>
     </div>
-  )
+  );
 }

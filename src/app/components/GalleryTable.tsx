@@ -6,6 +6,7 @@ import { DataTable } from "primereact/datatable";
 import { Button } from "primereact/button";
 import { Tag } from "primereact/tag";
 import { useRouter } from "next/navigation";
+import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
 
 type File = {
   id: number;
@@ -64,7 +65,6 @@ export default function GalleryTable({
       const data = await res.json();
       setTags(data);
     } catch (err) {
-      // Puedes manejar error aquí si quieres
       setTags([]);
     }
   }
@@ -85,7 +85,17 @@ export default function GalleryTable({
   };
 
   const handleDelete = (fileId: number) => {
-    alert(`Eliminar archivo con id ${fileId} (funcionalidad pendiente)`);
+    confirmDialog({
+      message: `¿Eliminar el archivo?`,
+      header: "Confirmar",
+      icon: "pi pi-exclamation-triangle",
+      acceptLabel: "Sí",
+      rejectLabel: "No",
+      accept: async () => {
+        await fetch(`/api/file/${fileId}`, { method: "DELETE" });
+        await fetchFiles();
+      },
+    });
   };
 
   const handleEdit = (rowData: any) => {
@@ -222,6 +232,7 @@ export default function GalleryTable({
           style={{ width: "4rem", textAlign: "center" }}
         />
       </DataTable>
+      <ConfirmDialog />
     </div>
   );
 }
