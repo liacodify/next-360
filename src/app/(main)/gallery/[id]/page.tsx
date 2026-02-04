@@ -66,6 +66,10 @@ export default function GalleryPreviewPage() {
   const [visibleGroups, setVisibleGroups] = useState<Record<number, boolean>>(
     {},
   );
+
+  // ✅ NUEVO: Estado para visibilidad de tags
+  const [visibleTags, setVisibleTags] = useState<Record<number, boolean>>({});
+
   const [openPreviewDialog, setOpenPreviewDialog] = useState(false);
   const [openNewCommentDialog, setOpenNewCommentDialog] = useState(false);
   const [selectComment, setSelectComment] = useState<any | null>(null);
@@ -99,6 +103,19 @@ export default function GalleryPreviewPage() {
       return res.json();
     },
   });
+
+  // ✅ NUEVO: Inicializar visibleTags cuando se carguen los tags
+  useEffect(() => {
+    if (
+      tagsQuery.data &&
+      tagsQuery.data.length > 0 &&
+      Object.keys(visibleTags).length === 0
+    ) {
+      setVisibleTags(
+        Object.fromEntries(tagsQuery.data.map((tag) => [tag.id, true])),
+      );
+    }
+  }, [tagsQuery.data, visibleTags]);
 
   // Función de búsqueda optimizada
   const searchPoints = useCallback(
@@ -216,6 +233,8 @@ export default function GalleryPreviewPage() {
                   onSelectPosition={handleSelectLegendPoint}
                   visibleGroups={visibleGroups}
                   setVisibleGroups={setVisibleGroups}
+                  visibleTags={visibleTags} // ✅ NUEVO
+                  setVisibleTags={setVisibleTags} // ✅ NUEVO
                 />
               </Sidebar>
               <Button
@@ -245,6 +264,7 @@ export default function GalleryPreviewPage() {
                   setOpenPreview={setOpenPreviewDialog}
                   setSelectComment={setSelectComment}
                   setOpenNewCommentDialog={setOpenNewCommentDialog}
+                  visibleTags={visibleTags} // ✅ NUEVO
                 />
               </div>
             </div>

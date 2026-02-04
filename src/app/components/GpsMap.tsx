@@ -76,11 +76,13 @@ const LegendMarkers = React.memo(function LegendMarkers({
   visibleGroups,
   selectedPosition,
   openPreview,
+  visibleTags,
 }: {
   legend: PointMarker[];
   visibleGroups: Record<number, boolean>;
   selectedPosition?: { lat: number; lon: number } | null;
   openPreview: (item: any) => void;
+  visibleTags: Record<number, boolean>;
 }) {
   const iconsById = useMemo(() => {
     const map = new Map<number, L.Icon | undefined>();
@@ -104,10 +106,27 @@ const LegendMarkers = React.memo(function LegendMarkers({
     return map;
   }, [legend]);
 
+  // Función para verificar si un item tiene tags visibles
+  const hasVisibleTags = useCallback(
+    (item: PointMarker) => {
+      const itemTags = (item as any).Tags || [];
+
+      // Si no tiene tags, es visible
+      if (itemTags.length === 0) return true;
+
+      // Si tiene tags, al menos uno debe estar visible
+      return itemTags.some((tagId: number) => visibleTags[tagId] !== false);
+    },
+    [visibleTags],
+  );
+
   return (
     <>
       {legend
-        .filter((item) => visibleGroups[item.markerId || 0] ?? true)
+        .filter(
+          (item) =>
+            (visibleGroups[item.markerId || 0] ?? true) && hasVisibleTags(item),
+        )
         .map((item) => (
           <MarkerWithAutoTooltip
             key={item.id}
@@ -135,8 +154,8 @@ const MarkerWithAutoTooltip = React.memo(function MarkerWithAutoTooltip({
   const markerRef = React.useRef<L.Marker>(null);
 
   const isSelected = selectedPosition
-    ? Math.abs(item.lat || 0 - selectedPosition.lat) < 0.00001 &&
-      Math.abs(item.lon || 0 - selectedPosition.lon) < 0.00001
+    ? Math.abs((item.lat || 0) - selectedPosition.lat) < 0.00001 &&
+      Math.abs((item.lon || 0) - selectedPosition.lon) < 0.00001
     : false;
 
   useEffect(() => {
@@ -278,7 +297,7 @@ const PointsLayer = React.memo(function PointsLayer({
     return () => {
       map.removeLayer(layer);
     };
-  }, [points, setCurrentTime]);
+  }, [points, setCurrentTime, map]);
 
   return null;
 });
@@ -338,11 +357,11 @@ const MarkerUpdater = React.memo(function MarkerUpdater({
         html: `
         <svg width="20" height="30" viewBox="0 0 20 30">
           <circle cx="10" cy="25" r="5" fill="#22c55e" stroke="#15803d" stroke-width="2"/>
-<line x1="10" y1="0" x2="10" y2="20" stroke="#22c55e" stroke-width="4" />
+          <line x1="10" y1="0" x2="10" y2="20" stroke="#22c55e" stroke-width="4" />
         </svg>
       `,
         iconSize: [20, 30],
-        iconAnchor: [10, 25], // Ajustar el ancla al centro del círculo
+        iconAnchor: [10, 25],
         className: "",
       }),
     [],
@@ -391,7 +410,6 @@ const AddMarkersOnClick = React.memo(function AddMarkersOnClick({
   useMapEvent("click", (e) => {
     if (!addingMode) return;
 
-    // Corregido URL icono a minúscula 'png'
     const icon = L.icon({
       iconUrl: "https://cdn-icons-png.flaticon.com/512/684/684908.png",
       iconSize: [38, 38],
@@ -403,9 +421,6 @@ const AddMarkersOnClick = React.memo(function AddMarkersOnClick({
       position: [e.latlng.lat, e.latlng.lng],
       icon,
     };
-
-    // Descomenta si quieres agregar marcadores a estado
-    // setMarkers((prev) => [...prev, newMarker])
 
     openModal();
     setAddingMode(false);
@@ -473,6 +488,7 @@ function GpsMap({
   setOpenNewCommentDialog,
   newPosition,
   setNewPosition,
+  visibleTags,
 }: {
   points: GpsPoint[];
   setSelectComment: React.Dispatch<
@@ -488,6 +504,7 @@ function GpsMap({
   visibleGroups: Record<number, boolean>;
   newPosition: any;
   setNewPosition: any;
+  visibleTags: Record<number, boolean>;
 }) {
   const polyline = useMemo(
     () => points.map((p) => [p.lat, p.lon]) as [number, number][],
@@ -506,9 +523,6 @@ function GpsMap({
 
   const [markers, setMarkers] = useState<any[]>([]);
   const [addingMode, setAddingMode] = useState(false);
-  const [selectedPositionNew, setSelectedPositionNew] = useState<
-    [number, number] | null
-  >(null);
 
   if (!points.length) {
     return <div className="text-center text-white">Cargando puntos...</div>;
@@ -524,18 +538,18 @@ function GpsMap({
   };
 
   useEffect(() => {
-    console.log("cambiar cursor");
     const mapContainer =
       document.querySelector<HTMLDivElement>(".leaflet-container");
 
     if (!mapContainer) return;
 
     if (addingMode) {
-      mapContainer.style.cursor = "crosshair"; // 👈 cursor en modo agregar
+      mapContainer.style.cursor = "crosshair";
     } else {
-      mapContainer.style.cursor = ""; // Leaflet vuelve a su cursor normal
+      mapContainer.style.cursor = "";
     }
   }, [addingMode]);
+
   return (
     <div
       style={{
@@ -563,7 +577,7 @@ function GpsMap({
         {addingMode && (
           <AddMarkerMode
             canAddMarker={async (pos: [number, number]) => {
-              await new Promise((r) => setTimeout(r, 300)); // simulo delay
+              await new Promise((r) => setTimeout(r, 300));
               return pos[0] >= 0;
             }}
             onSelect={onSelectPosition}
@@ -586,8 +600,8 @@ function GpsMap({
           openPreview={(e: any) => {
             setSelectComment(e);
             setOpenPreview(true);
-            console.log(e);
           }}
+          visibleTags={visibleTags}
         />
 
         <MarkerUpdater
@@ -641,12 +655,12 @@ function GpsMap({
             style={{
               position: "absolute",
               bottom: 20,
-              right: 120, // Le doy espacio para que no se superponga con "Añadir marcador"
+              right: 120,
               zIndex: 1000,
               padding: "12px 20px",
               fontSize: 16,
               borderRadius: "24px",
-              backgroundColor: "#dc3545", // rojo para cancelar
+              backgroundColor: "#dc3545",
               color: "white",
               border: "none",
               cursor: "pointer",

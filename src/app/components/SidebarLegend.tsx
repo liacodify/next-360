@@ -12,6 +12,8 @@ interface LegendMenuProps {
   setVisibleGroups: React.Dispatch<
     React.SetStateAction<Record<number, boolean>>
   >;
+  visibleTags: Record<number, boolean>;
+  setVisibleTags: React.Dispatch<React.SetStateAction<Record<number, boolean>>>;
 }
 
 export default function SidebarLegend({
@@ -20,6 +22,8 @@ export default function SidebarLegend({
   visibleGroups,
   onSelectPosition,
   setVisibleGroups,
+  visibleTags,
+  setVisibleTags,
 }: LegendMenuProps) {
   const [isOpen, setIsOpen] = useState(true);
 
@@ -32,6 +36,8 @@ export default function SidebarLegend({
           onSelectPosition={onSelectPosition}
           visibleGroups={visibleGroups}
           setVisibleGroups={setVisibleGroups}
+          visibleTags={visibleTags}
+          setVisibleTags={setVisibleTags}
         />
       </div>
     </div>
