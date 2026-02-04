@@ -7,10 +7,18 @@ export type PointMarkerWithTags = PointMarker & {
   marker: Marker | undefined;
 };
 
-type GroupedMarker = {
+type TagGroup = {
+  tags: Tag[];
+  tagKey: string;
+  items: PointMarkerWithTags[];
+  subGroups?: TagGroup[];
+};
+
+type MarkerGroup = {
   markerId: number;
   marker: Marker;
-  items: PointMarkerWithTags[];
+  tagGroups: TagGroup[];
+  totalItems: number;
 };
 
 interface LegendMenuProps {
@@ -33,9 +41,6 @@ const PointMarkerItem = React.memo(
     enabled: boolean;
     onSelectPosition: (pos: GpsPoint) => void;
   }) => {
-    const tagColor =
-      item.tags && item.tags.length > 0 ? item.tags[0].color : undefined;
-
     return (
       <div
         className={`flex flex-col gap-1 p-2 pl-4 rounded text-xs ${
@@ -48,20 +53,6 @@ const PointMarkerItem = React.memo(
         <div className="flex items-center gap-2">
           <i className="pi pi-map-marker text-sm text-blue-500" />
           <span className="font-semibold">{item?.comment}</span>
-        </div>
-        <div className="ml-6 text-[11px] text-gray-600 leading-tight flex items-center gap-1">
-          {tagColor && (
-            <span
-              className="inline-block w-3 h-3 rounded-full"
-              style={{
-                backgroundColor: `#${tagColor}`,
-                boxShadow: `0 0 5px #${tagColor}`,
-              }}
-            />
-          )}
-          <div>
-            <span className="font-medium"></span> {item.comment}
-          </div>
         </div>
         <div className="ml-6 text-[11px] text-gray-600 leading-tight">
           <div>
@@ -76,17 +67,122 @@ const PointMarkerItem = React.memo(
   },
 );
 
+const TagGroupItem = React.memo(
+  ({
+    tagGroup,
+    enabled,
+    onSelect,
+    level = 0,
+  }: {
+    tagGroup: TagGroup;
+    enabled: boolean;
+    onSelect: (pos: GpsPoint) => void;
+    level?: number;
+  }) => {
+    const [expanded, setExpanded] = React.useState(false);
+
+    const hasSubGroups = tagGroup.subGroups && tagGroup.subGroups.length > 0;
+    const hasDirectItems = tagGroup.items.length > 0;
+
+    return (
+      <div
+        className={`mb-2 ${level > 0 ? "ml-4" : "ml-4"} border-l-2 border-gray-200 pl-3`}
+      >
+        <div
+          className={`flex items-center justify-between px-3 py-2 rounded-md cursor-pointer select-none ${
+            enabled ? "hover:bg-blue-50 bg-gray-50" : "opacity-50 bg-gray-100"
+          }`}
+          onClick={() => setExpanded(!expanded)}
+        >
+          <div className="flex items-center gap-2 flex-1">
+            <div className="flex items-center gap-1">
+              {tagGroup.tags.map((tag) => (
+                <span
+                  key={tag.id}
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-medium"
+                  style={{
+                    backgroundColor: `#${tag.color}20`,
+                    border: `1px solid #${tag.color}`,
+                    color: `#${tag.color}`,
+                  }}
+                >
+                  <span
+                    className="inline-block w-2 h-2 rounded-full"
+                    style={{
+                      backgroundColor: `#${tag.color}`,
+                    }}
+                  />
+                  {tag.name}
+                </span>
+              ))}
+              {tagGroup.tags.length === 0 && (
+                <span className="text-xs text-gray-500 italic">Sin tags</span>
+              )}
+            </div>
+            <Badge value={tagGroup.items.length} severity="info" />
+            {hasSubGroups && (
+              <span className="text-[10px] text-gray-500">
+                (+{tagGroup.subGroups!.length} subgrupos)
+              </span>
+            )}
+          </div>
+          <button
+            className="text-sm font-bold px-2 py-0.5 rounded-full border border-gray-300 hover:bg-gray-200 transition-colors"
+            onClick={(e) => {
+              e.stopPropagation();
+              setExpanded(!expanded);
+            }}
+            type="button"
+          >
+            {expanded ? "−" : "+"}
+          </button>
+        </div>
+
+        <div
+          style={{
+            maxHeight: expanded && enabled ? 2000 : 0,
+            transition: "max-height 0.3s ease",
+            overflow: "hidden",
+          }}
+        >
+          {expanded && enabled && (
+            <>
+              {hasDirectItems &&
+                tagGroup.items.map((item) => (
+                  <PointMarkerItem
+                    key={item.id}
+                    item={item}
+                    enabled={enabled}
+                    onSelectPosition={onSelect}
+                  />
+                ))}
+              {hasSubGroups &&
+                tagGroup.subGroups!.map((subGroup) => (
+                  <TagGroupItem
+                    key={subGroup.tagKey}
+                    tagGroup={subGroup}
+                    enabled={enabled}
+                    onSelect={onSelect}
+                    level={level + 1}
+                  />
+                ))}
+            </>
+          )}
+        </div>
+      </div>
+    );
+  },
+);
+
 const GroupMenuItem = React.memo(
   ({
-    marker,
-    items,
+    markerGroup,
     enabled,
     onToggle,
     onSelect,
     forceExpanded,
   }: {
-    marker: Marker;
-    items: PointMarkerWithTags[];
+    markerGroup: MarkerGroup;
     enabled: boolean;
     onToggle: () => void;
     onSelect: (pos: GpsPoint) => void;
@@ -106,41 +202,39 @@ const GroupMenuItem = React.memo(
 
     return (
       <div
-        className="mb-2 rounded-md shadow-sm border border-gray-300 bg-white"
+        className="mb-3 rounded-lg shadow-md border-2 border-gray-300 bg-white"
         style={{ overflow: "hidden" }}
-        onClick={toggleExpanded}
       >
         <div
-          className={`flex items-center justify-between px-3 py-2 cursor-pointer select-none ${
-            enabled ? "hover:bg-gray-100" : "opacity-50"
+          className={`flex items-center justify-between px-4 py-3 cursor-pointer select-none ${
+            enabled ? "hover:bg-gray-50" : "opacity-50 bg-gray-100"
           }`}
+          onClick={toggleExpanded}
         >
-          <div className="flex items-center gap-2" onClick={toggleExpanded}>
+          <div className="flex items-center gap-3">
             <input
               type="checkbox"
               checked={enabled}
               onChange={onToggle}
               onClick={(e) => e.stopPropagation()}
-              className="w-4 h-4 cursor-pointer"
+              className="w-5 h-5 cursor-pointer"
             />
             <img
-              src={marker.icon}
-              alt={marker.name}
-              className="w-5 h-5 object-contain"
+              src={markerGroup.marker.icon}
+              alt={markerGroup.marker.name}
+              className="w-6 h-6 object-contain"
             />
-
-            <span className="font-semibold text-sm">{marker.name}</span>
-            <span className="ml-2">
-              <Badge value={items.length} severity="info" />
+            <span className="font-bold text-base">
+              {markerGroup.marker.name}
             </span>
+            <Badge value={markerGroup.totalItems} severity="success" />
           </div>
           <button
-            className="text-base font-bold px-2 py-0.5 rounded-full border border-gray-300 hover:bg-gray-200 transition-colors"
+            className="text-lg font-bold px-3 py-1 rounded-full border-2 border-gray-400 hover:bg-gray-200 transition-colors"
             onClick={(e) => {
               e.stopPropagation();
               toggleExpanded();
             }}
-            aria-label={expanded ? "Contraer grupo" : "Expandir grupo"}
             type="button"
           >
             {expanded ? "−" : "+"}
@@ -148,23 +242,30 @@ const GroupMenuItem = React.memo(
         </div>
 
         <div
-          className="pl-4 pr-3 pb-3"
+          className="pb-3"
           style={{
-            maxHeight: expanded && enabled ? 800 : 0,
-            transition: "max-height 0.3s ease",
+            maxHeight: expanded && enabled ? 2000 : 0,
+            transition: "max-height 0.4s ease",
             overflow: "hidden",
           }}
         >
-          {expanded &&
-            enabled &&
-            items.map((item) => (
-              <PointMarkerItem
-                key={item.id}
-                item={item}
-                enabled={enabled}
-                onSelectPosition={onSelect}
-              />
-            ))}
+          {expanded && enabled && (
+            <div className="px-3 pt-2">
+              {markerGroup.tagGroups.length > 1 && (
+                <div className="mb-2 text-xs text-gray-600 px-3">
+                  {markerGroup.tagGroups.length} grupos de tags
+                </div>
+              )}
+              {markerGroup.tagGroups.map((tagGroup) => (
+                <TagGroupItem
+                  key={tagGroup.tagKey}
+                  tagGroup={tagGroup}
+                  enabled={enabled}
+                  onSelect={onSelect}
+                />
+              ))}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -189,31 +290,116 @@ const LegendMenu: React.FC<LegendMenuProps> = ({
     }));
   }, [pointsMarkers, tags]);
 
-  const groups = useMemo(() => {
-    const map = new Map<number, GroupedMarker>();
+  const markerGroups = useMemo(() => {
+    const markerMap = new Map<number, TagGroup[]>();
+
+    // First, create all tag groups
     for (const item of pointsWithTags) {
-      if (!map.has(item.markerId || 0)) {
-        map.set(item.markerId || 0, {
-          markerId: item.markerId!,
-          marker: item.marker!,
-          items: [],
-        });
+      const markerId = item.markerId || 0;
+
+      if (!markerMap.has(markerId)) {
+        markerMap.set(markerId, []);
       }
-      map.get(item.markerId || 0)!.items.push(item);
+
+      const sortedTags = (item.tags || []).sort((a, b) => a.id - b.id);
+      const tagKey =
+        sortedTags.length > 0
+          ? sortedTags.map((t) => t.id).join("-")
+          : "no-tags";
+
+      const groups = markerMap.get(markerId)!;
+      let existingGroup = groups.find((g) => g.tagKey === tagKey);
+
+      if (!existingGroup) {
+        existingGroup = {
+          tags: sortedTags,
+          tagKey,
+          items: [],
+          subGroups: [],
+        };
+        groups.push(existingGroup);
+      }
+
+      existingGroup.items.push(item);
     }
-    return Array.from(map.values());
+
+    // Now build hierarchy: groups with fewer tags go inside groups with more tags (if subset)
+    const result: MarkerGroup[] = [];
+    for (const [markerId, allGroups] of markerMap.entries()) {
+      const firstItem = allGroups[0]?.items[0];
+      if (!firstItem?.marker) continue;
+
+      // Sort by tag count descending (more tags first)
+      const sortedGroups = [...allGroups].sort((a, b) => {
+        if (a.tags.length === 0 && b.tags.length > 0) return 1;
+        if (a.tags.length > 0 && b.tags.length === 0) return -1;
+        return b.tags.length - a.tags.length;
+      });
+
+      // Build hierarchy
+      const topLevelGroups: TagGroup[] = [];
+      const processedKeys = new Set<string>();
+
+      for (const group of sortedGroups) {
+        if (processedKeys.has(group.tagKey)) continue;
+
+        // Check if this group is a subset of any larger group
+        let isSubset = false;
+        for (const potentialParent of sortedGroups) {
+          if (
+            potentialParent.tagKey === group.tagKey ||
+            potentialParent.tags.length <= group.tags.length
+          ) {
+            continue;
+          }
+
+          // Check if all tags in current group are in potential parent
+          const parentTagIds = new Set(potentialParent.tags.map((t) => t.id));
+          const isSubsetOfParent = group.tags.every((tag) =>
+            parentTagIds.has(tag.id),
+          );
+
+          if (isSubsetOfParent) {
+            // Add as subgroup
+            if (!potentialParent.subGroups) {
+              potentialParent.subGroups = [];
+            }
+            potentialParent.subGroups.push(group);
+            processedKeys.add(group.tagKey);
+            isSubset = true;
+            break;
+          }
+        }
+
+        if (!isSubset) {
+          topLevelGroups.push(group);
+          processedKeys.add(group.tagKey);
+        }
+      }
+
+      result.push({
+        markerId,
+        marker: firstItem.marker,
+        tagGroups: topLevelGroups,
+        totalItems: allGroups.reduce((sum, tg) => sum + tg.items.length, 0),
+      });
+    }
+
+    return result;
   }, [pointsWithTags]);
 
   React.useEffect(() => {
-    if (groups.length > 0) {
+    if (markerGroups.length > 0) {
       setVisibleGroups((prev) => {
         if (Object.keys(prev).length === 0) {
-          return Object.fromEntries(groups.map((g) => [g.markerId, true]));
+          return Object.fromEntries(
+            markerGroups.map((g) => [g.markerId, true]),
+          );
         }
         return prev;
       });
     }
-  }, [groups, setVisibleGroups]);
+  }, [markerGroups, setVisibleGroups]);
 
   const toggleGroup = useCallback(
     (markerId: number) => {
@@ -226,20 +412,22 @@ const LegendMenu: React.FC<LegendMenuProps> = ({
   );
 
   const allVisible = useMemo(
-    () => groups.length > 0 && groups.every((g) => visibleGroups[g.markerId]),
-    [groups, visibleGroups],
+    () =>
+      markerGroups.length > 0 &&
+      markerGroups.every((g) => visibleGroups[g.markerId]),
+    [markerGroups, visibleGroups],
   );
 
   const toggleAll = () => {
     const newState = !allVisible;
     setVisibleGroups(
-      Object.fromEntries(groups.map((g) => [g.markerId, newState])),
+      Object.fromEntries(markerGroups.map((g) => [g.markerId, newState])),
     );
   };
 
   return (
     <div>
-      <div className="mb-4 flex items-center gap-2">
+      <div className="mb-4 flex items-center gap-2 p-3 bg-gray-50 rounded-lg border border-gray-200">
         <input
           type="checkbox"
           checked={allVisible}
@@ -249,21 +437,20 @@ const LegendMenu: React.FC<LegendMenuProps> = ({
         />
         <label
           htmlFor="toggle-all-groups"
-          className="select-none cursor-pointer"
+          className="select-none cursor-pointer font-medium"
         >
           {allVisible ? "Cerrar todos los grupos" : "Abrir todos los grupos"}
         </label>
       </div>
 
-      {groups.map(({ markerId, marker, items }) => (
+      {markerGroups.map((markerGroup) => (
         <GroupMenuItem
-          key={markerId}
-          marker={marker}
-          items={items}
-          enabled={visibleGroups[markerId] ?? false}
-          onToggle={() => toggleGroup(markerId)}
+          key={markerGroup.markerId}
+          markerGroup={markerGroup}
+          enabled={visibleGroups[markerGroup.markerId] ?? false}
+          onToggle={() => toggleGroup(markerGroup.markerId)}
           onSelect={onSelectPosition}
-          forceExpanded={visibleGroups[markerId] ?? false}
+          forceExpanded={visibleGroups[markerGroup.markerId] ?? false}
         />
       ))}
     </div>

@@ -205,7 +205,7 @@ export default function GalleryPreviewPage() {
           <SplitterPanel className="w-full flex align-items-center justify-content-center">
             <div className="w-full relative bg-white border-l h-full flex flex-col overflow-auto">
               <Sidebar
-                style={{ width: "30rem" }}
+                style={{ width: "40rem" }}
                 header={() => <>Leyenda</>}
                 visible={visible}
                 onHide={() => setVisible(false)}

@@ -25,7 +25,7 @@ export default function SidebarLegend({
 
   return (
     <div className="w-full h-full">
-      <div className="p-2 overflow-auto h-full">
+      <div className="p-1 overflow-auto h-full">
         <LegendMenu
           tags={tags}
           pointsMarkers={pointsMarkers}
