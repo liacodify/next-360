@@ -34,7 +34,7 @@ import "leaflet.markercluster/dist/MarkerCluster.css";
 import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 import "leaflet.markercluster";
 
-interface MarkerWithIcon {
+export interface MarkerWithIcon {
   id: number;
   position: [number, number];
   marker?: IMarker;

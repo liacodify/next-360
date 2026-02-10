@@ -16,16 +16,6 @@ export async function GET(
       where: { id },
       include: {
         gpsPoints: true,
-        project: {
-          include: {
-            PointMarker: {
-              include: {
-                marker: true,
-              },
-            },
-            locations: true,
-          },
-        },
       },
     });
 
@@ -39,7 +29,7 @@ export async function GET(
     const tags = await db.tag.findMany({
       where: {
         id: {
-          in: file.tags ?? [],
+          in: file.tagIds ?? [],
         },
       },
     });

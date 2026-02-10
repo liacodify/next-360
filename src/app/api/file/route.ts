@@ -24,14 +24,7 @@ export async function GET(req: Request) {
     const companyIds = userWithCompanies.UserCompany.map((uc) => uc.companyId);
 
     const files = await db.file.findMany({
-      where: {
-        project: {
-          companyId: { in: companyIds },
-        },
-      },
-      include: {
-        project: true,
-      },
+      where: {},
     });
 
     return NextResponse.json(files);
