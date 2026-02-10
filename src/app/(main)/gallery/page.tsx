@@ -5,6 +5,7 @@ import { Button } from "primereact/button";
 import { Dialog } from "primereact/dialog";
 import GalleryForm from "../../components/GalleryForm";
 import GalleryTable from "../../components/GalleryTable";
+import VideoCollectionForm from "@/app/components/VideoCollectionForm";
 
 export default function GalleryPage() {
   const [modalOpen, setModalOpen] = useState(false);
@@ -32,7 +33,7 @@ export default function GalleryPage() {
         <h1 className="text-2xl font-bold">Galeria</h1>
         <Button
           size="small"
-          label="Nuevo Elemento"
+          label="Nuevo Grupo"
           icon="pi pi-plus"
           onClick={openCreate}
         />
@@ -47,9 +48,9 @@ export default function GalleryPage() {
         modal
         onHide={() => setModalOpen(false)}
       >
-        <GalleryForm
-          initialData={editingData || undefined}
+        <VideoCollectionForm
           onCloseModal={handleSaved}
+          initialData={editingData || undefined}
         />
       </Dialog>
     </div>

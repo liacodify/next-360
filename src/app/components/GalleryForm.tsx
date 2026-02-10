@@ -3,26 +3,22 @@
 import { useEffect, useState, useRef } from "react";
 import { useFormik } from "formik";
 import { z } from "zod";
-import { InputText } from "primereact/inputtext";
 import { FileUpload } from "primereact/fileupload";
-import { FloatLabel } from "primereact/floatlabel";
 import { Button } from "primereact/button";
-import { Dropdown } from "primereact/dropdown";
 import { MultiSelect } from "primereact/multiselect";
 import { Toast } from "primereact/toast";
+import { InputNumber } from "primereact/inputnumber";
 import { uploadFileDirectlyToS3 } from "../lib/uploadToS3";
 
 const videoSchema = z.object({
-  startPlace: z.string().min(1, "Lugar requerido"),
-  fileName: z.string().min(1, "Nombre requerido"),
   file: z
     .instanceof(File, { message: "Debe seleccionar un archivo válido" })
     .optional(),
   gps: z
     .instanceof(File, { message: "Debe seleccionar un archivo gps válido" })
     .optional(),
-  projectId: z.number(),
-  tags: z.array(z.number()).optional(),
+  tagIds: z.array(z.number()).optional(),
+  order: z.number().min(0),
   id: z.number().optional(),
 });
 
@@ -31,12 +27,17 @@ type VideoForm = z.infer<typeof videoSchema>;
 type Props = {
   initialData?: Partial<VideoForm>;
   onCloseModal?: () => void;
+  selectCollectionId?: number | null;
 };
 
 type Project = { id: number; name: string };
 type Tag = { id: number; name: string };
 
-export default function GalleryForm({ initialData, onCloseModal }: Props) {
+export default function GalleryForm({
+  initialData,
+  onCloseModal,
+  selectCollectionId,
+}: Props) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
   const toast = useRef<Toast>(null);
@@ -44,49 +45,38 @@ export default function GalleryForm({ initialData, onCloseModal }: Props) {
   useEffect(() => {
     async function fetchProjects() {
       const res = await fetch("/api/project");
-      if (res.ok) {
-        const data = await res.json();
-        setProjects(data);
-      }
+      if (res.ok) setProjects(await res.json());
     }
+
     async function fetchTags() {
       const res = await fetch("/api/tag");
-      if (res.ok) {
-        const data = await res.json();
-        setTags(data);
-      }
+      if (res.ok) setTags(await res.json());
     }
+
     fetchProjects();
     fetchTags();
   }, []);
 
   const formik = useFormik<VideoForm>({
     initialValues: {
-      startPlace: initialData?.startPlace || "",
-      fileName: initialData?.fileName || "",
       file: undefined,
       gps: undefined,
-      projectId: initialData?.projectId || 0,
-      tags: initialData?.tags || [],
+      tagIds: initialData?.tagIds || [],
+      order: initialData?.order ?? 0,
       id: initialData?.id,
     },
+
     onSubmit: async (values, { setErrors, setSubmitting }) => {
       setSubmitting(true);
       try {
         let fileKey: string | undefined;
         if (values.file) {
-          fileKey = await uploadFileDirectlyToS3(
-            values.file,
-            values.fileName + ".mp4",
-          );
+          fileKey = await uploadFileDirectlyToS3(values.file, values.file.name);
         }
 
         let gpsKey: string | undefined;
         if (values.gps) {
-          gpsKey = await uploadFileDirectlyToS3(
-            values.gps,
-            values.fileName + ".gpx",
-          );
+          gpsKey = await uploadFileDirectlyToS3(values.gps, values.gps.name);
         }
 
         const method = values.id ? "PUT" : "POST";
@@ -94,12 +84,11 @@ export default function GalleryForm({ initialData, onCloseModal }: Props) {
 
         const body = {
           id: values.id,
-          startPlace: values.startPlace,
-          fileName: values.fileName,
           fileKey,
           gpsKey,
-          projectId: values.projectId,
-          tagIds: values.tags || [],
+          collectionId: selectCollectionId,
+          tagIds: values.tagIds || [],
+          order: values.order,
         };
 
         const response = await fetch(url, {
@@ -115,16 +104,14 @@ export default function GalleryForm({ initialData, onCloseModal }: Props) {
           );
         }
 
-        const result = await response.json();
-
         toast.current?.show({
           severity: "success",
           summary: "Éxito",
-          detail: "Archivo subido correctamente",
+          detail: "Archivo guardado correctamente",
           life: 3000,
         });
 
-        if (onCloseModal) onCloseModal();
+        onCloseModal?.();
       } catch (err: any) {
         console.error(err);
         toast.current?.show({
@@ -133,9 +120,7 @@ export default function GalleryForm({ initialData, onCloseModal }: Props) {
           detail: err.message || "Error al subir o procesar archivo.",
           life: 4000,
         });
-        setErrors({
-          fileName: err.message || "Error al subir o procesar archivo.",
-        });
+        setErrors({});
       } finally {
         setSubmitting(false);
       }
@@ -143,62 +128,40 @@ export default function GalleryForm({ initialData, onCloseModal }: Props) {
   });
 
   return (
-    <div className="flex justify-center w-full h-full ">
+    <div className="flex justify-center w-full h-full">
       <Toast ref={toast} />
+
       <form
         onSubmit={formik.handleSubmit}
-        className="flex flex-col gap-6 bg-white  rounded-2xl shadow-xl w-full"
+        className="flex flex-col gap-6 bg-white rounded-2xl shadow-xl w-full p-6"
       >
-        <FloatLabel>
-          <InputText
-            id="startPlace"
-            value={formik.values.startPlace}
-            onChange={formik.handleChange}
-            type="number"
-            className="w-full"
-          />
-          <label htmlFor="startPlace">Kilometro de Inicio</label>
-        </FloatLabel>
-        {formik.touched.startPlace && formik.errors.startPlace && (
-          <small className="text-red-500">{formik.errors.startPlace}</small>
-        )}
-
-        <FloatLabel>
-          <InputText
-            id="fileName"
-            value={formik.values.fileName}
-            onChange={formik.handleChange}
-            className="w-full"
-          />
-          <label htmlFor="fileName">Nombre del Archivo</label>
-        </FloatLabel>
-        {formik.touched.fileName && formik.errors.fileName && (
-          <small className="text-red-500">{formik.errors.fileName}</small>
-        )}
-
+        {/* TAGS */}
         <div className="flex flex-col gap-2">
-          <label className="text-gray-700 font-medium">Proyecto</label>
-          <Dropdown
-            options={projects}
-            value={
-              projects.find((p) => p.id === formik.values.projectId) || null
-            }
-            onChange={(e) => formik.setFieldValue("projectId", e.value.id)}
-            optionLabel="name"
-            placeholder="Seleccionar proyecto"
+          <label className="text-gray-700 font-medium">Tagss</label>
+          <MultiSelect
+            value={formik.values.tagIds}
+            options={tags.map((tag) => ({
+              label: tag.name,
+              value: tag.id,
+            }))}
+            onChange={(e) => formik.setFieldValue("tagIds", e.value)}
+            placeholder="Selecciona los tags"
+            display="chip"
             className="w-full"
-            dropdownIcon="pi pi-chevron-down"
           />
         </div>
 
+        {/* ORDER */}
         <div className="flex flex-col gap-2">
-          <label className="text-gray-700 font-medium">Tags</label>
-          <MultiSelect
-            value={formik.values.tags}
-            options={tags.map((tag) => ({ label: tag.name, value: tag.id }))}
-            onChange={(e) => formik.setFieldValue("tags", e.value)}
-            placeholder="Selecciona los tags"
-            display="chip"
+          <label className="text-gray-700 font-medium">
+            Orden en la colección
+          </label>
+
+          <InputNumber
+            value={formik.values.order}
+            onValueChange={(e) => formik.setFieldValue("order", e.value ?? 0)}
+            min={0}
+            showButtons
             className="w-full"
           />
         </div>
@@ -222,6 +185,7 @@ export default function GalleryForm({ initialData, onCloseModal }: Props) {
           )}
         </div>
 
+        {/* GPX */}
         <div className="flex flex-col gap-2">
           <label className="text-gray-700 font-medium">Archivo GPX</label>
           <FileUpload

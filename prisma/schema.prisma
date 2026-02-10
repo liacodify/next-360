@@ -7,8 +7,6 @@ generator client {
   provider = "prisma-client-js"
 }
 
-// --------------------------------------
-
 model User {
   id             Int      @id @default(autoincrement())
   createdAt      DateTime @default(now())
@@ -31,7 +29,7 @@ model UserCompany {
   user    User    @relation(fields: [userId], references: [id])
   company Company @relation(fields: [companyId], references: [id])
 
-  @@id([userId, companyId]) // composite primary key
+  @@id([userId, companyId])
 }
 
 model Session {
@@ -55,8 +53,6 @@ model Token {
   updatedAt   DateTime @updatedAt
   hashedToken String
   type        String
-  // See note below about TokenType enum
-  // type        TokenType
   expiresAt   DateTime
   sentTo      String
 
@@ -67,12 +63,26 @@ model Token {
 }
 
 model Project {
-  id          Int           @id @default(autoincrement())
-  name        String
-  File        File[]
-  PointMarker PointMarker[]
-  Company     Company?      @relation(fields: [companyId], references: [id])
-  companyId   Int?
+  id               Int               @id @default(autoincrement())
+  name             String
+  PointMarker      PointMarker[]
+  Company          Company?          @relation(fields: [companyId], references: [id])
+  companyId        Int?
+  locations        ProjectLocation[]
+  videoCollections VideoCollection[]
+}
+
+model ProjectLocation {
+  id        Int      @id @default(autoincrement())
+  lat       Float
+  lon       Float
+  meter     Float?
+  createdAt DateTime @default(now())
+
+  projectId Int
+  project   Project @relation(fields: [projectId], references: [id])
+
+  @@index([projectId])
 }
 
 model Company {
@@ -83,17 +93,36 @@ model Company {
 }
 
 model File {
-  id         Int        @id @default(autoincrement())
-  fileName   String
-  filePath   String
-  duration   Float
+  id       Int    @id @default(autoincrement())
+  filePath String
+  duration Float
+
   startPlace Float?
-  gpsPoints  GpsPoint[]
+  order      Int
 
-  tags Int[]
+  gpsPoints GpsPoint[]
 
-  projectId Int?
-  project   Project? @relation(fields: [projectId], references: [id])
+  tagIds Int[]
+
+  collectionId Int
+
+  createdAt DateTime @default(now())
+
+  collection VideoCollection @relation(fields: [collectionId], references: [id])
+
+  @@unique([collectionId, order])
+}
+
+model VideoCollection {
+  id        Int      @id @default(autoincrement())
+  projectId Int
+  name      String
+  date      DateTime
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id])
+  files   File[]
+  tagIds  Int[]
 }
 
 model Marker {
@@ -124,10 +153,11 @@ model PointMarker {
   urlFile   String?
   Tags      Int[]
 
-  markerId    Int?
-  projectId   Int?
-  parentId    Int?
-  createdById Int
+  markerId       Int?
+  projectId      Int?
+  parentId       Int?
+  createdById    Int
+  referenceMeter Float?
 
   project Project?      @relation(fields: [projectId], references: [id])
   user    User          @relation(fields: [createdById], references: [id])

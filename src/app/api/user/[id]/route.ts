@@ -1,4 +1,5 @@
 import db from "@/lib/db";
+import bcrypt from "bcryptjs";
 import { NextResponse } from "next/server";
 
 export async function GET(req: Request) {
@@ -34,13 +35,13 @@ export async function PUT(req: Request) {
 
     const body = await req.json();
     const { companyIds, hashedPassword, ...userData } = body;
+    const dataToUpdate: any = {
+      ...userData,
+      ...(hashedPassword
+        ? { hashedPassword: await bcrypt.hash(hashedPassword, 10) }
+        : {}),
+    };
 
-    // No permitir actualizar hashedPassword por accidente
-    if (!hashedPassword) delete userData.hashedPassword;
-
-    const dataToUpdate: any = { ...userData };
-
-    // Si vienen companyIds, actualizamos la relación
     if (Array.isArray(companyIds)) {
       dataToUpdate.UserCompany = {
         deleteMany: {
@@ -52,6 +53,7 @@ export async function PUT(req: Request) {
       };
     }
 
+    console.log(dataToUpdate);
     const updated = await db.user.update({
       where: { id },
       data: dataToUpdate,
@@ -64,7 +66,6 @@ export async function PUT(req: Request) {
       },
     });
 
-    // Eliminar hashedPassword de la respuesta
     const { hashedPassword: removed, ...safeUser } = updated;
 
     return NextResponse.json(safeUser);

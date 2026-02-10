@@ -7,6 +7,7 @@ import { Button } from "primereact/button";
 import { Toast } from "primereact/toast";
 import { MultiSelect } from "primereact/multiselect";
 import { Dropdown } from "primereact/dropdown";
+import { formatDistance } from "../utis/formatDistance";
 
 interface Marker {
   id: number;
@@ -21,7 +22,7 @@ interface Tag {
 
 interface NewCommentDialogProps {
   visible: boolean;
-  newPosition: [number, number] | null;
+  newPosition: [number, number, number] | null;
   onHide: () => void;
   onSubmit: (data: {
     comment: string;
@@ -151,9 +152,13 @@ const NewCommentDialog: React.FC<NewCommentDialogProps> = ({
 
       <div className="surface-card p-2 rounded-lg border-1 border-gray-200 flex flex-col gap-4 shadow-1">
         {newPosition && (
-          <div className="text-sm text-gray-500 mb-3">
-            <span className="font-medium">Lat:</span> {newPosition[0]} —{" "}
-            <span className="font-medium">Lon:</span> {newPosition[1]}
+          <div className="text-sm text-center font-bold text-gray-500 mb-3">
+            {/* <span className="font-medium">Lat:</span> {newPosition[0]} */}
+            {/* <br /> */}
+            {/* <span className="font-medium">Lon:</span> {newPosition[1]} */}
+            {/* <br /> */}
+            <span className="">km de referencia</span>{" "}
+            {formatDistance(newPosition[2])}
           </div>
         )}
 

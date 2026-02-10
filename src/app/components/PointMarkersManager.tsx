@@ -197,6 +197,7 @@ export default function PointMarkersManager({ projectId }: Props) {
         markerId: p.markerId,
         marker: p.marker?.name,
         parentId: p.parentId,
+        metrado: p.referenceMeter,
         tags: p.tags?.map((t) => t.name).join(";") || "",
       }),
     );

@@ -38,7 +38,6 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  // --------- 🔒 PROTECCIÓN POR ROL (ADMIN) ---------
   const isAdmin = token.role === "ADMIN";
 
   const isAdminRoute = ADMIN_ONLY.some((route) => pathname.startsWith(route));
@@ -55,7 +54,6 @@ export async function proxy(request: NextRequest) {
   return NextResponse.next();
 }
 
-// Aplica a toda la app excepto login, next, auth
 export const config = {
   matcher: ["/((?!login|_next|api/auth|static).*)"],
 };

@@ -6,7 +6,6 @@ export async function GET() {
     const projects = await db.project.findMany({
       orderBy: { id: "desc" },
       include: {
-        File: true,
         PointMarker: true,
         Company: true, // Incluye la compañía relacionada
       },

@@ -4,234 +4,294 @@ import React, { useEffect, useState } from "react";
 import { Column } from "primereact/column";
 import { DataTable } from "primereact/datatable";
 import { Button } from "primereact/button";
-import { Tag } from "primereact/tag";
 import { useRouter } from "next/navigation";
 import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
+import { Dialog } from "primereact/dialog";
+import GalleryForm from "./GalleryForm";
+import { Tag as ITag } from "@prisma/client";
+import { Tag } from "primereact/tag";
 
-type File = {
+type FileType = {
   id: number;
-  fileName: string;
+  order: number;
   duration: number;
-  startPlace: number;
-  tags: number[];
-  project: { id: number; name: string };
+  tagIds: number[];
 };
 
-type TagType = {
+type VideoCollection = {
   id: number;
   name: string;
+  date: string;
+  project: {
+    name: string;
+  };
+  tagIds: number[];
+  files: FileType[];
 };
 
 type GalleryTableProps = {
   reloadSignal?: number;
-  onEdit?: (data: any) => void;
+  onEdit?: (data: VideoCollection) => void;
 };
 
 export default function GalleryTable({
   reloadSignal,
   onEdit,
 }: GalleryTableProps) {
-  const [isClient, setIsClient] = useState(false);
-  const [files, setFiles] = useState<File[]>([]);
-  const [tags, setTags] = useState<TagType[]>([]);
+  const [videoCollections, setVideoCollections] = useState<VideoCollection[]>(
+    [],
+  );
+  const [expandedRows, setExpandedRows] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingData, setEditingData] = useState<any | null>(null);
+  const [selectCollectionId, setSelectCollectionId] = useState<number | null>(
+    null,
+  );
 
   const router = useRouter();
 
-  useEffect(() => {
-    setIsClient(true);
-  }, []);
-
-  async function fetchFiles() {
+  async function fetchCollections() {
     setIsLoading(true);
-    setError(null);
     try {
-      const res = await fetch("/api/file");
-      if (!res.ok) throw new Error("Error cargando archivos");
+      const res = await fetch("/api/video-collection");
       const data = await res.json();
-      setFiles(data);
-    } catch (err: any) {
-      setError(err.message);
+      setVideoCollections(data);
     } finally {
       setIsLoading(false);
     }
   }
 
-  async function fetchTags() {
+  const [tags, setTags] = useState<ITag[]>([]);
+  const fetchTags = async () => {
     try {
       const res = await fetch("/api/tag");
-      if (!res.ok) throw new Error("Error cargando tags");
-      const data = await res.json();
-      setTags(data);
-    } catch (err) {
-      setTags([]);
+
+      setTags((await res.json()) as ITag[]);
+    } finally {
+      setIsLoading(false);
     }
-  }
+  };
 
   useEffect(() => {
-    fetchFiles();
+    fetchCollections();
     fetchTags();
   }, []);
 
   useEffect(() => {
     if (reloadSignal !== undefined) {
-      fetchFiles();
+      fetchCollections();
     }
   }, [reloadSignal]);
 
-  const handleOpen = (fileId: number) => {
-    router.push(`/gallery/${fileId}`);
-  };
-
-  const handleDelete = (fileId: number) => {
-    confirmDialog({
-      message: `¿Eliminar el archivo?`,
-      header: "Confirmar",
-      icon: "pi pi-exclamation-triangle",
-      acceptLabel: "Sí",
-      rejectLabel: "No",
-      accept: async () => {
-        await fetch(`/api/upload/${fileId}`, { method: "DELETE" });
-        await fetchFiles();
-      },
-    });
-  };
-
-  const handleEdit = (rowData: any) => {
-    if (onEdit) onEdit(rowData);
-  };
-
-  const openButton = (rowData: any) => (
-    <Button
-      size="small"
-      icon="pi pi-external-link"
-      rounded
-      text
-      aria-label="Abrir archivo"
-      onClick={() => handleOpen(rowData.id)}
-      className="p-button-text p-button-rounded p-button-info"
-    />
-  );
-
-  const deleteButton = (rowData: any) => (
-    <Button
-      size="small"
-      icon="pi pi-trash"
-      severity="danger"
-      rounded
-      text
-      aria-label="Eliminar archivo"
-      onClick={() => handleDelete(rowData.id)}
-      className="p-button-text p-button-rounded"
-    />
-  );
-
-  const editButton = (rowData: any) => (
-    <Button
-      size="small"
-      icon="pi pi-pencil"
-      rounded
-      text
-      aria-label="Editar archivo"
-      onClick={() => handleEdit(rowData)}
-      className="p-button-text p-button-rounded p-button-warning"
-    />
-  );
-
-  const tagsBodyTemplate = (rowData: any) => {
-    if (!rowData.tags || rowData.tags.length === 0) {
-      return <span className="text-gray-500">Sin tags</span>;
+  const tagsTemplate = (tagIds: number[]) => {
+    if (!tagIds || tagIds.length === 0) {
+      return <span className="text-gray-400">—</span>;
     }
 
-    if (!tags || tags.length === 0) {
-      return <span className="text-gray-400 italic">Cargando tags...</span>;
-    }
+    const relatedTags = tags.filter((tag) => tagIds.includes(tag.id));
 
-    const mappedTags = rowData.tags
-      .map((tagId: number) => tags.find((t) => t.id === tagId))
-      .filter(Boolean);
-
-    if (mappedTags.length === 0) {
-      return <span className="text-gray-500">Sin tags</span>;
+    if (relatedTags.length === 0) {
+      return <span className="text-gray-400">—</span>;
     }
 
     return (
       <div className="flex flex-wrap gap-1">
-        {mappedTags.map((tag: any, index: any) => (
-          <Tag
-            key={tag.id ?? index}
-            value={tag.name}
-            severity="success"
-            rounded
-            style={{ fontSize: "0.75rem", padding: "0.2rem 0.5rem" }}
-          />
+        {relatedTags.map((tag) => (
+          <Tag key={tag.id} value={tag.name} />
         ))}
       </div>
     );
   };
 
-  if (!isClient) {
-    return null;
-  }
+  const handleDeleteCollection = (id: number) => {
+    confirmDialog({
+      message: "¿Eliminar la colección?",
+      header: "Confirmar",
+      icon: "pi pi-exclamation-triangle",
+      accept: async () => {
+        await fetch(`/api/video-collection/${id}`, {
+          method: "DELETE",
+        });
+        fetchCollections();
+      },
+    });
+  };
+
+  const handleAddFile = (collectionId: number) => {
+    setEditingData(null);
+    setSelectCollectionId(collectionId);
+    setModalOpen(true);
+  };
+
+  const handleEditFile = (fileId: number) => {
+    for (const collection of videoCollections) {
+      const file = collection.files.find((f) => f.id === fileId);
+      if (file) {
+        setEditingData(file);
+        setSelectCollectionId(collection.id);
+        setModalOpen(true);
+        return;
+      }
+    }
+  };
+  const handleDeleteFile = (fileId: number) => {
+    confirmDialog({
+      message: "¿Eliminar el archivo?",
+      header: "Confirmar",
+      icon: "pi pi-exclamation-triangle",
+      accept: async () => {
+        await fetch(`/api/file/${fileId}`, {
+          method: "DELETE",
+        });
+        fetchCollections();
+      },
+    });
+  };
+
+  const handleSaved = () => {
+    setModalOpen(false);
+    fetchCollections();
+  };
+
+  const filesTemplate = (collection: VideoCollection) => {
+    return (
+      <div className="flex flex-col gap-3">
+        <div className="flex justify-end">
+          <Button
+            icon="pi pi-plus"
+            label="Agregar archivo"
+            text
+            severity="success"
+            onClick={() => handleAddFile(collection.id)}
+          />
+        </div>
+
+        <DataTable
+          value={collection.files}
+          size="small"
+          responsiveLayout="scroll"
+        >
+          <Column field="id" header="ID" style={{ width: "4rem" }} />
+          <Column field="order" header="Orden" />
+          <Column
+            field="duration"
+            header="Duración (s)"
+            body={(row: FileType) => row.duration.toFixed(2)}
+          />
+
+          <Column
+            header="Tags"
+            body={(row: FileType) => tagsTemplate(row.tagIds)}
+          />
+
+          <Column
+            header="Editar"
+            body={(row: FileType) => (
+              <Button
+                icon="pi pi-pencil"
+                text
+                severity="warning"
+                onClick={() => handleEditFile(row.id)}
+              />
+            )}
+          />
+
+          <Column
+            header="Eliminar"
+            body={(row: FileType) => (
+              <Button
+                icon="pi pi-trash"
+                text
+                severity="danger"
+                onClick={() => handleDeleteFile(row.id)}
+              />
+            )}
+          />
+        </DataTable>
+      </div>
+    );
+  };
+
+  const handleOpenFolder = (id: number) => {
+    router.push("gallery/" + id);
+  };
 
   return (
     <div className="p-4 bg-white shadow-md rounded-md">
-      {error && (
-        <div className="p-error mb-3">Error al cargar los archivos.</div>
-      )}
+      <Dialog
+        header={editingData ? "Editar archivo" : "Nuevo archivo"}
+        visible={modalOpen}
+        style={{ width: "30rem" }}
+        modal
+        onHide={() => setModalOpen(false)}
+      >
+        <GalleryForm
+          initialData={editingData || undefined}
+          selectCollectionId={selectCollectionId}
+          onCloseModal={handleSaved}
+        />
+      </Dialog>
 
       <DataTable
-        size="small"
-        value={files}
-        tableStyle={{ minWidth: "60rem" }}
+        value={videoCollections}
         loading={isLoading}
-        emptyMessage="No se encontraron archivos."
+        expandedRows={expandedRows}
+        onRowToggle={(e) => setExpandedRows(e.data)}
+        rowExpansionTemplate={filesTemplate}
+        dataKey="id"
         responsiveLayout="scroll"
-        className="shadow-sm"
       >
+        <Column expander style={{ width: "3rem" }} />
+
         <Column field="id" header="ID" style={{ width: "4rem" }} />
+        <Column field="name" header="Nombre" />
+        <Column field="project.name" header="Proyecto" />
+
         <Column
-          field="fileName"
-          header="Nombre"
-          style={{ minWidth: "15rem" }}
+          field="date"
+          header="Fecha"
+          body={(row: VideoCollection) =>
+            new Date(row.date).toLocaleDateString()
+          }
         />
-        <Column
-          field="project.name"
-          header="Proyecto"
-          style={{ minWidth: "12rem" }}
-        />
-        <Column
-          field="duration"
-          header="Duración (s)"
-          style={{ width: "8rem", textAlign: "right" }}
-        />
-        <Column
-          field="startPlace"
-          header="Km. Inicio"
-          style={{ width: "10rem", textAlign: "right" }}
-        />
+
         <Column
           header="Tags"
-          body={tagsBodyTemplate}
-          style={{ minWidth: "12rem" }}
+          body={(row: VideoCollection) => tagsTemplate(row.tagIds)}
         />
         <Column
-          header="Abrir"
-          body={openButton}
-          style={{ width: "4rem", textAlign: "center" }}
+          header="Ingresar"
+          body={(row: FileType) => (
+            <Button
+              icon="pi pi-folder-open"
+              text
+              severity="warning"
+              onClick={() => handleOpenFolder(row.id)}
+            />
+          )}
         />
+
         <Column
           header="Editar"
-          body={editButton}
-          style={{ width: "4rem", textAlign: "center" }}
+          body={(row: VideoCollection) => (
+            <Button icon="pi pi-pencil" text onClick={() => onEdit?.(row)} />
+          )}
         />
         <Column
           header="Eliminar"
-          body={deleteButton}
-          style={{ width: "4rem", textAlign: "center" }}
+          body={(row: VideoCollection) => (
+            <Button
+              icon="pi pi-trash"
+              text
+              severity="danger"
+              onClick={() => handleDeleteCollection(row.id)}
+            />
+          )}
         />
       </DataTable>
+
       <ConfirmDialog />
     </div>
   );

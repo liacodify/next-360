@@ -21,7 +21,18 @@ import {
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 import DraggablePointer from "./DraggablePointer";
-import { GpsPoint, Marker as IMarker, PointMarker } from "@prisma/client";
+import {
+  File,
+  GpsPoint,
+  Marker as IMarker,
+  PointMarker,
+  ProjectLocation,
+} from "@prisma/client";
+import { formatDistance } from "../utis/formatDistance";
+
+import "leaflet.markercluster/dist/MarkerCluster.css";
+import "leaflet.markercluster/dist/MarkerCluster.Default.css";
+import "leaflet.markercluster";
 
 interface MarkerWithIcon {
   id: number;
@@ -30,15 +41,124 @@ interface MarkerWithIcon {
   icon?: L.Icon;
 }
 
-const formatDistance = (meters: number) => {
-  const km = Math.floor(meters / 1000);
-  const m = meters % 1000;
-  return `${km}k + ${m.toFixed(2)}m`;
-};
+const customStyles = `
+  .custom-tooltip {
+    background: rgba(255, 255, 255, 0.95) !important;
+    border: none !important;
+    border-radius: 8px !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+    padding: 8px 12px !important;
+    font-family: system-ui, -apple-system, sans-serif !important;
+  }
+  .custom-tooltip::before {
+    border-top-color: rgba(255, 255, 255, 0.95) !important;
+  }
+  .custom-popup .leaflet-popup-content-wrapper {
+    border-radius: 12px !important;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2) !important;
+    padding: 16px !important;
+  }
+  .custom-popup .leaflet-popup-tip {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1) !important;
+  }
+  .custom-popup .leaflet-popup-content {
+    margin: 0 !important;
+  }
+  
+  /* Estilos para clustering */
+  .marker-cluster-small {
+    background-color: rgba(110, 204, 57, 0.6);
+  }
+  .marker-cluster-small div {
+    background-color: rgba(110, 204, 57, 0.8);
+    font-weight: bold;
+    font-size: 12px;
+  }
+  .marker-cluster-medium {
+    background-color: rgba(241, 211, 87, 0.6);
+  }
+  .marker-cluster-medium div {
+    background-color: rgba(241, 211, 87, 0.8);
+    font-weight: bold;
+    font-size: 13px;
+  }
+  .marker-cluster-large {
+    background-color: rgba(253, 156, 115, 0.6);
+  }
+  .marker-cluster-large div {
+    background-color: rgba(253, 156, 115, 0.8);
+    font-weight: bold;
+    font-size: 14px;
+  }
+  
+  /* Animación suave para markers */
+  .leaflet-marker-icon {
+    transition: transform 0.2s ease;
+  }
+  .leaflet-marker-icon:hover {
+    transform: scale(1.1);
+    z-index: 1000 !important;
+  }
+  
+  /* Botones mejorados */
+  .map-control-button {
+    padding: 12px 20px;
+    font-size: 16px;
+    font-weight: 600;
+    border-radius: 24px;
+    border: none;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    transition: all 0.3s ease;
+    backdrop-filter: blur(10px);
+  }
+  .map-control-button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+  }
+  .map-control-button:active {
+    transform: translateY(0);
+  }
+  
+  /* Overlay para modo añadir */
+  .adding-mode-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.3);
+    backdrop-filter: blur(2px);
+    z-index: 500;
+    pointer-events: none;
+    animation: fadeIn 0.2s ease;
+  }
+  
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  
+  /* Indicador de coordenadas */
+  .coordinates-indicator {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    padding: 8px 16px;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(10px);
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    z-index: 1000;
+    pointer-events: none;
+    font-size: 13px;
+    font-weight: 500;
+    font-family: 'Courier New', monospace;
+  }
 
-/* ---------------------------------------
-    Icono default Leaflet configurado 1 vez
----------------------------------------- */
+  /* Polyline con mejor performance */
+  .leaflet-overlay-pane svg {
+    will-change: transform;
+  }
+`;
+
 L.Marker.prototype.options.icon = L.icon({
   iconUrl: "/images/marker-icon.png",
   shadowUrl: "/images/marker-shadow.png",
@@ -46,30 +166,139 @@ L.Marker.prototype.options.icon = L.icon({
   iconAnchor: [12, 41],
 });
 
+const StyleInjector = React.memo(function StyleInjector() {
+  useEffect(() => {
+    const styleElement = document.createElement("style");
+    styleElement.innerHTML = customStyles;
+    document.head.appendChild(styleElement);
+    return () => {
+      document.head.removeChild(styleElement);
+    };
+  }, []);
+  return null;
+});
+
+// 🔥 Capa de ubicaciones del proyecto optimizada
+const ProjectLocationsLayer = React.memo(function ProjectLocationsLayer({
+  locations,
+}: {
+  locations: { lat: number; lon: number; meter?: number | null }[];
+}) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!locations.length) return;
+
+    const layer = L.layerGroup();
+    const canvas = L.canvas({ padding: 0.5 });
+
+    locations.forEach((loc) => {
+      const label = formatDistance(loc.meter as number);
+
+      const marker = L.circleMarker([loc.lat, loc.lon], {
+        radius: 4,
+        renderer: canvas,
+        weight: 2,
+        fillColor: "#3b82f6",
+        fillOpacity: 0.7,
+      });
+
+      if (label) {
+        marker.bindTooltip(label, {
+          direction: "top",
+          offset: [0, -8],
+          opacity: 0.95,
+          className: "custom-tooltip",
+          sticky: true,
+        });
+      }
+
+      marker.addTo(layer);
+    });
+
+    layer.addTo(map);
+    return () => {
+      map.removeLayer(layer);
+    };
+  }, [locations, map]);
+
+  return null;
+});
+
+// 🔥 Efecto de posición seleccionada optimizado
 const SelectedPositionEffect = React.memo(function SelectedPositionEffect({
   selectedPosition,
 }: {
   selectedPosition?: { lat: number; lon: number } | null;
 }) {
   const map = useMap();
+  const lastPositionRef = useRef<{ lat: number; lon: number } | null>(null);
 
   useEffect(() => {
     if (!selectedPosition) return;
 
+    // Solo mover si la posición cambió significativamente
+    const lastPos = lastPositionRef.current;
+    if (
+      lastPos &&
+      Math.abs(lastPos.lat - selectedPosition.lat) < 0.00001 &&
+      Math.abs(lastPos.lon - selectedPosition.lon) < 0.00001
+    ) {
+      return;
+    }
+
     const { lat, lng } = map.getCenter();
+    const zoom = map.getZoom();
     const same =
-      Math.abs(lat - selectedPosition.lat) < 0.00001 &&
-      Math.abs(lng - selectedPosition.lon) < 0.00001;
+      Math.abs(lat - selectedPosition.lat) < 0.0001 &&
+      Math.abs(lng - selectedPosition.lon) < 0.0001;
 
     if (!same) {
-      map.setView([selectedPosition.lat, selectedPosition.lon], 18, {
+      const targetZoom = zoom < 16 ? 18 : zoom;
+      map.setView([selectedPosition.lat, selectedPosition.lon], targetZoom, {
         animate: true,
+        duration: 0.5,
       });
     }
-  }, [selectedPosition]);
+
+    lastPositionRef.current = selectedPosition;
+  }, [selectedPosition, map]);
 
   return null;
 });
+
+// 🔥 Tipo para puntos con información de archivo
+type GpsPointWithFile = GpsPoint & {
+  fileId: number;
+  fileIndex: number;
+  fileName?: string;
+  GpsPointComment?: { comment: string }[];
+};
+
+// 🔥 Función para calcular distancia entre dos puntos GPS
+function getDistanceMeters(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number,
+) {
+  const R = 6371000; // radio Tierra en metros
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return R * c;
+}
 
 const LegendMarkers = React.memo(function LegendMarkers({
   legend,
@@ -77,155 +306,287 @@ const LegendMarkers = React.memo(function LegendMarkers({
   selectedPosition,
   openPreview,
   visibleTags,
+  onSelectPoint,
+  allGpsPoints,
 }: {
   legend: PointMarker[];
   visibleGroups: Record<number, boolean>;
   selectedPosition?: { lat: number; lon: number } | null;
   openPreview: (item: any) => void;
   visibleTags: Record<number, boolean>;
+  onSelectPoint: (p: {
+    second: number;
+    fileId: number;
+    fileIndex: number;
+  }) => void;
+  allGpsPoints: GpsPointWithFile[];
 }) {
+  const map = useMap();
+  const clusterGroupRef = useRef<L.MarkerClusterGroup | null>(null);
+
   const iconsById = useMemo(() => {
-    const map = new Map<number, L.Icon | undefined>();
+    const iconMap = new Map<number, L.Icon | undefined>();
 
     legend.forEach((item) => {
-      if (map.has(item.id)) return;
+      if (iconMap.has(item.id)) return;
       try {
-        map.set(
+        iconMap.set(
           item.id,
           L.icon({
             iconUrl: (item as any).marker.icon,
-            iconSize: [25, 25],
-            iconAnchor: [12, 25],
+            iconSize: [15, 15],
+            iconAnchor: [7, 15],
+            popupAnchor: [0, -15],
           }),
         );
       } catch {
-        map.set(item.id, undefined);
+        iconMap.set(item.id, undefined);
       }
     });
 
-    return map;
+    return iconMap;
   }, [legend]);
 
-  // Función para verificar si un item tiene tags visibles
   const hasVisibleTags = useCallback(
     (item: PointMarker) => {
       const itemTags = (item as any).Tags || [];
-
-      // Si no tiene tags, es visible
       if (itemTags.length === 0) return true;
-
-      // Si tiene tags, al menos uno debe estar visible
       return itemTags.some((tagId: number) => visibleTags[tagId] !== false);
     },
     [visibleTags],
   );
 
-  return (
-    <>
-      {legend
-        .filter(
-          (item) =>
-            (visibleGroups[item.markerId || 0] ?? true) && hasVisibleTags(item),
-        )
-        .map((item) => (
-          <MarkerWithAutoTooltip
-            key={item.id}
-            item={item as any}
-            icon={iconsById.get(item.id)}
-            selectedPosition={selectedPosition}
-            onEyeClick={openPreview}
-          />
-        ))}
-    </>
+  const filteredLegend = useMemo(
+    () =>
+      legend.filter(
+        (item) =>
+          (visibleGroups[item.markerId || 0] ?? true) && hasVisibleTags(item),
+      ),
+    [legend, visibleGroups, hasVisibleTags],
   );
-});
 
-const MarkerWithAutoTooltip = React.memo(function MarkerWithAutoTooltip({
-  item,
-  icon,
-  selectedPosition,
-  onEyeClick,
-}: {
-  item: PointMarker & { marker: IMarker };
-  icon?: L.Icon;
-  selectedPosition?: { lat: number; lon: number } | null;
-  onEyeClick?: (item: any) => any;
-}) {
-  const markerRef = React.useRef<L.Marker>(null);
+  // 🔥 Función para encontrar el GPS point más cercano
+  const findClosestGpsPoint = useCallback(
+    (markerLat: number, markerLon: number) => {
+      if (!allGpsPoints.length) return null;
 
-  const isSelected = selectedPosition
-    ? Math.abs((item.lat || 0) - selectedPosition.lat) < 0.00001 &&
-      Math.abs((item.lon || 0) - selectedPosition.lon) < 0.00001
-    : false;
+      let closestPoint = allGpsPoints[0];
+      let minDistance = getDistanceMeters(
+        markerLat,
+        markerLon,
+        closestPoint.lat,
+        closestPoint.lon,
+      );
+
+      for (const point of allGpsPoints) {
+        const distance = getDistanceMeters(
+          markerLat,
+          markerLon,
+          point.lat,
+          point.lon,
+        );
+
+        if (distance < minDistance) {
+          minDistance = distance;
+          closestPoint = point;
+        }
+      }
+
+      return closestPoint;
+    },
+    [allGpsPoints],
+  );
 
   useEffect(() => {
-    if (isSelected && markerRef.current) {
-      markerRef.current.openTooltip();
-    }
-  }, [isSelected]);
+    const clusterGroup = L.markerClusterGroup({
+      maxClusterRadius: 50,
+      spiderfyOnMaxZoom: true,
+      showCoverageOnHover: false,
+      zoomToBoundsOnClick: true,
+      spiderfyDistanceMultiplier: 1.5,
+      iconCreateFunction: (cluster: any) => {
+        const childCount = cluster.getChildCount();
+        let c = "marker-cluster-";
+        if (childCount < 10) {
+          c += "small";
+        } else if (childCount < 100) {
+          c += "medium";
+        } else {
+          c += "large";
+        }
 
-  return (
-    <Marker
-      position={[item.lat || 0, item.lon || 0]}
-      icon={icon}
-      ref={markerRef}
-    >
-      <Popup>
-        <div style={{ textAlign: "center" }}>
-          <strong>{item.marker.name}</strong>
-          <br />
-          <span>Lat: {item.lat?.toFixed(5)}</span>
-          <br />
-          <span>Lon: {item.lon?.toFixed(5)}</span>
-          {item.comment && (
-            <>
-              <br />
-              <em>{item.comment}</em>
-            </>
-          )}
-          <br />
+        return L.divIcon({
+          html: `<div><span>${childCount}</span></div>`,
+          className: `marker-cluster ${c}`,
+          iconSize: L.point(40, 40),
+        });
+      },
+    });
+
+    clusterGroupRef.current = clusterGroup;
+
+    filteredLegend.forEach((item) => {
+      const icon = iconsById.get(item.id);
+      if (!icon) return;
+
+      const marker = L.marker([item.lat || 0, item.lon || 0], { icon });
+
+      const popupContent = `
+        <div class="custom-popup" style="text-align: center; min-width: 180px;">
+          <div style="font-size: 16px; font-weight: 600; margin-bottom: 8px; color: #1f2937;">
+            ${(item as any).marker.name}
+          </div>
+          <div style="font-size: 13px; color: #6b7280; margin-bottom: 4px;">
+            <strong>Lat:</strong> ${item.lat?.toFixed(5)}
+          </div>
+          <div style="font-size: 13px; color: #6b7280; margin-bottom: 8px;">
+            <strong>Lon:</strong> ${item.lon?.toFixed(5)}
+          </div>
+          ${
+            item.comment
+              ? `<div style="font-size: 13px; font-style: italic; color: #4b5563; margin-bottom: 12px; padding: 8px; background: #f3f4f6; border-radius: 6px;">
+                  ${item.comment}
+                </div>`
+              : ""
+          }
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onEyeClick && onEyeClick(item);
-            }}
-            style={{
-              marginTop: "8px",
-              cursor: "pointer",
-              background: "none",
-              border: "none",
-              padding: 0,
-              color: "#007bff",
-              fontSize: "18px",
-            }}
-            aria-label="Ver detalles"
-            title="Ver detalles"
+            onclick="window.openMarkerPreview(${item.id})"
+            style="
+              margin-top: 8px;
+              padding: 8px 16px;
+              background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+              color: white;
+              border: none;
+              border-radius: 8px;
+              cursor: pointer;
+              font-size: 14px;
+              font-weight: 500;
+              transition: all 0.2s;
+              display: inline-flex;
+              align-items: center;
+              gap: 6px;
+            "
+            onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(59, 130, 246, 0.4)'"
+            onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='none'"
           >
-            <i
-              className="pi pi-eye"
-              style={{ fontSize: "18px", color: "#007bff" }}
-            />
+            <i class="pi pi-eye" style="font-size: 14px;"></i>
+            Ver detalles
           </button>
         </div>
-      </Popup>
-    </Marker>
-  );
-});
+      `;
 
-const PointsLayer = React.memo(function PointsLayer({
-  points,
-  setCurrentTime,
-}: {
-  points: (GpsPoint & {
-    GpsPointComment?: { comment: string }[];
-    fileName?: string;
-  })[];
-  setCurrentTime: (v: number) => void;
-}) {
-  const map = useMap();
+      marker.bindPopup(popupContent, {
+        className: "custom-popup",
+        maxWidth: 300,
+      });
+
+      // 🔥 AQUÍ ESTÁ EL CAMBIO PRINCIPAL
+      marker.on("click", () => {
+        console.log("Marker clickeado:", item);
+
+        // Buscar el GPS point más cercano
+        const closestGpsPoint = findClosestGpsPoint(
+          item.lat || 0,
+          item.lon || 0,
+        );
+
+        if (closestGpsPoint) {
+          console.log("GPS Point más cercano encontrado:", closestGpsPoint);
+
+          // Seleccionar el punto GPS más cercano
+          onSelectPoint({
+            second: closestGpsPoint.second,
+            fileId: closestGpsPoint.fileId,
+            fileIndex: closestGpsPoint.fileIndex,
+          });
+        } else {
+          console.log("No se encontró ningún GPS point cercano");
+        }
+      });
+
+      (marker as any)._itemData = item;
+      clusterGroup.addLayer(marker);
+    });
+
+    (window as any).openMarkerPreview = (itemId: number) => {
+      const item = filteredLegend.find((i) => i.id === itemId);
+      if (item) openPreview(item);
+    };
+
+    clusterGroup.addTo(map);
+
+    return () => {
+      map.removeLayer(clusterGroup);
+      delete (window as any).openMarkerPreview;
+    };
+  }, [
+    filteredLegend,
+    iconsById,
+    map,
+    openPreview,
+    findClosestGpsPoint,
+    onSelectPoint,
+  ]);
 
   useEffect(() => {
+    if (!selectedPosition || !clusterGroupRef.current) return;
+
+    const targetItem = filteredLegend.find(
+      (item) =>
+        Math.abs((item.lat || 0) - selectedPosition.lat) < 0.00001 &&
+        Math.abs((item.lon || 0) - selectedPosition.lon) < 0.00001,
+    );
+
+    if (targetItem) {
+      clusterGroupRef.current.eachLayer((layer: any) => {
+        if (
+          layer._itemData &&
+          layer._itemData.id === targetItem.id &&
+          layer.openPopup
+        ) {
+          clusterGroupRef.current?.zoomToShowLayer(layer, () => {
+            layer.openPopup();
+          });
+        }
+      });
+    }
+  }, [selectedPosition, filteredLegend]);
+
+  return null;
+});
+
+// 🔥 Capa de puntos GPS optimizada
+const PointsLayer = React.memo(function PointsLayer({
+  points,
+  onSelectPoint,
+}: {
+  points: GpsPointWithFile[];
+  onSelectPoint: (p: {
+    second: number;
+    fileId: number;
+    fileIndex: number;
+  }) => void;
+}) {
+  const map = useMap();
+  const layersRef = useRef<{
+    cluster: L.MarkerClusterGroup;
+    layer: L.LayerGroup;
+  } | null>(null);
+
+  useEffect(() => {
+    // Limpiar capas anteriores
+    if (layersRef.current) {
+      map.removeLayer(layersRef.current.cluster);
+      map.removeLayer(layersRef.current.layer);
+    }
+
     const layer = L.layerGroup();
+    const clusterGroup = L.markerClusterGroup({
+      maxClusterRadius: 40,
+      disableClusteringAtZoom: 18,
+      spiderfyOnMaxZoom: true,
+      showCoverageOnHover: false,
+    });
 
     points.forEach((p) => {
       const commentText =
@@ -233,112 +594,166 @@ const PointsLayer = React.memo(function PointsLayer({
       const hasComment = commentText.trim().length > 0;
 
       const tooltipContent = `
-        <div style="font-size: 12px; max-width: 200px;">
+        <div style="font-size: 12px; max-width: 220px;">
           ${
             hasComment
-              ? `<div><strong>Comentario:</strong> ${commentText}</div>`
+              ? `<div style="margin-bottom: 6px; padding: 6px; background: #fef3c7; border-left: 3px solid #f59e0b; border-radius: 4px;">
+                  <strong>💬 Comentario:</strong>
+                  <div>${commentText}</div>
+                </div>`
               : ""
           }
           <div><strong>Lat:</strong> ${p.lat.toFixed(5)}</div>
           <div><strong>Lon:</strong> ${p.lon.toFixed(5)}</div>
-          ${p.fileName ? `<div><strong>Archivo:</strong> ${p.fileName}</div>` : ""}
+          <div style="font-size: 11px; color: #6b7280;">
+            🎥 Archivo #${p.fileIndex + 1}
+          </div>
         </div>
       `;
 
+      const handleSelect = () => {
+        onSelectPoint({
+          second: p.second,
+          fileId: p.fileId,
+          fileIndex: p.fileIndex,
+        });
+      };
+
       if (hasComment) {
-        const messageIcon = L.divIcon({
-          html: `
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="#007bff" viewBox="0 0 24 24">
-              <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
-            </svg>
-          `,
-          className: "",
-          iconSize: [24, 24],
-          iconAnchor: [12, 24],
-          popupAnchor: [0, -24],
+        const marker = L.marker([p.lat, p.lon], {
+          icon: L.divIcon({
+            html: `💬`,
+            className: "comment-marker",
+            iconSize: [24, 24],
+          }),
         });
 
-        const marker = L.marker([p.lat, p.lon], { icon: messageIcon });
-
         marker.on("click", () => {
-          setCurrentTime(p.second);
-          marker.openTooltip();
+          handleSelect();
+          setTimeout(() => marker.openTooltip(), 100);
         });
 
         marker.bindTooltip(tooltipContent, {
           direction: "top",
-          offset: [0, -10],
-          opacity: 0.9,
+          offset: [0, -12],
+          opacity: 0.95,
+          className: "custom-tooltip",
         });
 
-        layer.addLayer(marker);
+        clusterGroup.addLayer(marker);
       } else {
         const circle = L.circleMarker([p.lat, p.lon], {
-          radius: 1,
-          color: "#ff4444",
-          fillColor: "#ff4444",
-          fillOpacity: 0.3,
-          opacity: 0.4,
+          radius: 4,
+          fillColor: "#ef4444",
+          color: "#fff",
+          fillOpacity: 0.6,
+          opacity: 0.6,
+          weight: 1,
         });
 
-        circle.on("click", () => setCurrentTime(p.second));
+        circle.on("click", handleSelect);
 
         circle.bindTooltip(tooltipContent, {
           direction: "top",
-          offset: [0, -10],
-          opacity: 0.9,
+          offset: [0, -6],
+          opacity: 0.95,
+          className: "custom-tooltip",
         });
 
         layer.addLayer(circle);
       }
     });
 
+    clusterGroup.addTo(map);
     layer.addTo(map);
+
+    layersRef.current = { cluster: clusterGroup, layer };
+
     return () => {
-      map.removeLayer(layer);
+      if (layersRef.current) {
+        map.removeLayer(layersRef.current.cluster);
+        map.removeLayer(layersRef.current.layer);
+      }
     };
-  }, [points, setCurrentTime, map]);
+  }, [points, onSelectPoint, map]);
 
   return null;
 });
 
 const MarkerUpdater = React.memo(function MarkerUpdater({
-  points,
+  files,
   currentTime,
-  setCurrentTime,
+  onSelectPoint,
   startKm,
-  setOpenPreview,
-  setSelectComment,
-  setOpenNewCommentDialog,
 }: {
-  points: GpsPoint[];
-  currentTime: number;
-  setCurrentTime: (v: number) => void;
+  files: (File & { gpsPoints: GpsPoint[] })[];
+  currentTime: {
+    second: number;
+    fileId: number;
+    fileIndex: number;
+  };
+  onSelectPoint: (p: {
+    second: number;
+    fileId: number;
+    fileIndex: number;
+  }) => void;
   startKm: number;
-  setOpenNewCommentDialog: React.Dispatch<React.SetStateAction<boolean>>;
-  setOpenPreview: (v: any) => void;
-  setSelectComment: React.Dispatch<
-    React.SetStateAction<(any & { replies: any[] }) | null>
-  >;
 }) {
   const map = useMap();
-
-  // Ref para guardar última posición y evitar updates innecesarios
   const lastPosRef = useRef<[number, number] | null>(null);
+  const isUserInteractingRef = useRef(false);
+
+  const pointsWithFile = useMemo<GpsPointWithFile[]>(
+    () =>
+      files.flatMap((file, fileIndex) =>
+        file.gpsPoints.map((p) => ({
+          ...p,
+          fileId: file.id,
+          fileIndex,
+        })),
+      ),
+    [files],
+  );
 
   const position = useMemo(() => {
-    if (!points.length) return null;
-    return points.reduce((prev, curr) =>
-      Math.abs(curr.second - currentTime) < Math.abs(prev.second - currentTime)
+    if (!files.length || !files[currentTime.fileIndex]) return null;
+
+    const currentFile = files[currentTime.fileIndex];
+    if (!currentFile.gpsPoints.length) return null;
+
+    return currentFile.gpsPoints.reduce((prev, curr) =>
+      Math.abs(curr.second - currentTime.second) <
+      Math.abs(prev.second - currentTime.second)
         ? curr
         : prev,
     );
-  }, [points, currentTime]);
+  }, [files, currentTime.fileIndex, currentTime.second]);
 
   useEffect(() => {
-    if (!position) return;
+    const onMoveStart = () => {
+      isUserInteractingRef.current = true;
+    };
+
+    const onMoveEnd = () => {
+      setTimeout(() => {
+        isUserInteractingRef.current = false;
+      }, 1000);
+    };
+
+    map.on("movestart", onMoveStart);
+    map.on("moveend", onMoveEnd);
+
+    return () => {
+      map.off("movestart", onMoveStart);
+      map.off("moveend", onMoveEnd);
+    };
+  }, [map]);
+
+  useEffect(() => {
+    if (!position || isUserInteractingRef.current) return;
 
     const lastPos = lastPosRef.current;
+
     if (
       !lastPos ||
       Math.abs(lastPos[0] - position.lat) > 0.0001 ||
@@ -346,7 +761,9 @@ const MarkerUpdater = React.memo(function MarkerUpdater({
     ) {
       map.setView([position.lat, position.lon], map.getZoom(), {
         animate: true,
+        duration: 0.3,
       });
+
       lastPosRef.current = [position.lat, position.lon];
     }
   }, [position, map]);
@@ -355,13 +772,15 @@ const MarkerUpdater = React.memo(function MarkerUpdater({
     () =>
       L.divIcon({
         html: `
-        <svg width="20" height="30" viewBox="0 0 20 30">
-          <circle cx="10" cy="25" r="5" fill="#22c55e" stroke="#15803d" stroke-width="2"/>
-          <line x1="10" y1="0" x2="10" y2="20" stroke="#22c55e" stroke-width="4" />
-        </svg>
+        <div style="position: relative;">
+          <svg width="24" height="34" viewBox="0 0 24 34">
+            <circle cx="12" cy="28" r="6" fill="#22c55e" stroke="#15803d" stroke-width="2.5"/>
+            <line x1="12" y1="0" x2="12" y2="22" stroke="#22c55e" stroke-width="5" stroke-linecap="round"/>
+          </svg>
+        </div>
       `,
-        iconSize: [20, 30],
-        iconAnchor: [10, 25],
+        iconSize: [24, 34],
+        iconAnchor: [12, 28],
         className: "",
       }),
     [],
@@ -369,25 +788,26 @@ const MarkerUpdater = React.memo(function MarkerUpdater({
 
   return (
     <>
-      <PointsLayer points={points} setCurrentTime={setCurrentTime} />
+      <PointsLayer points={pointsWithFile} onSelectPoint={onSelectPoint} />
 
       {position && (
         <Marker
           position={[position.lat, position.lon]}
           icon={customIcon}
           bubblingMouseEvents={false}
+          zIndexOffset={2000}
         >
           <Tooltip
             permanent
             direction="top"
-            offset={[0, -25]}
-            interactive={true}
-            className="tooltip-interactive"
+            offset={[0, -30]}
+            interactive
+            className="custom-tooltip"
           >
-            <div className="font-semibold text-[12px]">
-              Lat: {position.lat.toFixed(5)} <br />
-              Lon: {position.lon.toFixed(5)} <br />
-              Dist: {formatDistance(startKm + position.totalDistance)} <br />
+            <div style={{ fontWeight: 600, fontSize: "13px" }}>
+              📍 Lat: {position.lat.toFixed(5)}
+              <br />
+              📍 Lon: {position.lon.toFixed(5)}
             </div>
           </Tooltip>
         </Marker>
@@ -395,6 +815,36 @@ const MarkerUpdater = React.memo(function MarkerUpdater({
     </>
   );
 });
+
+function AddMarkerMode({
+  onSelect,
+  onCancel,
+}: {
+  onSelect: (pos: [number, number]) => void;
+  onCancel: () => void;
+}) {
+  const [position, setPosition] = useState<[number, number] | null>(null);
+  const [waiting, setWaiting] = useState(false);
+
+  useMapEvents({
+    mousemove(e: any) {
+      setPosition([e.latlng.lat, e.latlng.lng]);
+    },
+    click: async (e: any) => {
+      if (waiting) return;
+      const pos: [number, number] = [e.latlng.lat, e.latlng.lng];
+      setWaiting(true);
+      onSelect(pos);
+    },
+  });
+
+  return position ? (
+    <div className="coordinates-indicator">
+      📍 {position[0].toFixed(5)}, {position[1].toFixed(5)}
+      {waiting && " (guardando...)"}
+    </div>
+  ) : null;
+}
 
 const AddMarkersOnClick = React.memo(function AddMarkersOnClick({
   addingMode,
@@ -429,56 +879,11 @@ const AddMarkersOnClick = React.memo(function AddMarkersOnClick({
   return null;
 });
 
-function AddMarkerMode({
-  onSelect,
-  onCancel,
-  canAddMarker,
-}: {
-  onSelect: (pos: [number, number]) => void;
-  onCancel: () => void;
-  canAddMarker: (pos: [number, number]) => boolean | Promise<boolean>;
-}) {
-  const [position, setPosition] = useState<[number, number] | null>(null);
-  const [waiting, setWaiting] = useState(false);
-
-  useMapEvents({
-    mousemove(e: any) {
-      setPosition([e.latlng.lat, e.latlng.lng]);
-    },
-    click: async (e: any) => {
-      if (waiting) return;
-      const pos: [number, number] = [e.latlng.lat, e.latlng.lng];
-      setWaiting(true);
-      onSelect(pos);
-    },
-  });
-
-  return position ? (
-    <div
-      style={{
-        position: "absolute",
-        top: 10,
-        left: 10,
-        padding: "4px 8px",
-        background: "white",
-        borderRadius: 4,
-        zIndex: 1000,
-        pointerEvents: "none",
-        opacity: waiting ? 0.5 : 1,
-      }}
-    >
-      Lat: {position[0].toFixed(5)}, Lng: {position[1].toFixed(5)}{" "}
-      {waiting && "(validando...)"}
-    </div>
-  ) : null;
-}
-
-export default React.memo(GpsMap);
-
+// 🔥 Componente principal optimizado
 function GpsMap({
-  points,
+  files,
   currentTime,
-  setCurrentTime,
+  onSelectPoint,
   startKm,
   legend,
   selectedPosition,
@@ -489,14 +894,17 @@ function GpsMap({
   newPosition,
   setNewPosition,
   visibleTags,
+  projectLocations,
 }: {
-  points: GpsPoint[];
-  setSelectComment: React.Dispatch<
-    React.SetStateAction<(any & { replies: any[] }) | null>
-  >;
+  files: (File & { gpsPoints: GpsPoint[] })[];
+  setSelectComment: React.Dispatch<React.SetStateAction<any | null>>;
   setOpenNewCommentDialog: React.Dispatch<React.SetStateAction<boolean>>;
-  currentTime: number;
-  setCurrentTime: (v: number) => void;
+  currentTime: { second: number; fileId: number; fileIndex: number };
+  onSelectPoint: (p: {
+    second: number;
+    fileId: number;
+    fileIndex: number;
+  }) => void;
   setOpenPreview: React.Dispatch<React.SetStateAction<boolean>>;
   startKm: number;
   legend: PointMarker[];
@@ -505,50 +913,99 @@ function GpsMap({
   newPosition: any;
   setNewPosition: any;
   visibleTags: Record<number, boolean>;
+  projectLocations: ProjectLocation[];
 }) {
-  const polyline = useMemo(
-    () => points.map((p) => [p.lat, p.lon]) as [number, number][],
-    [points],
+  // 🔥 Polyline optimizada - una sola para todos los archivos
+  const polyline = useMemo<[number, number][]>(
+    () =>
+      files
+        .slice()
+        .sort((a, b) => a.order - b.order)
+        .flatMap((file) =>
+          file.gpsPoints
+            .slice()
+            .sort((a, b) => a.second - b.second)
+            .map((p): [number, number] => [p.lat, p.lon]),
+        ),
+    [files],
   );
 
   const center = useMemo<[number, number]>(() => {
-    if (!points.length) return [0, 0];
-    return [points[0].lat, points[0].lon];
-  }, [points]);
+    if (!files[0] || !files[0].gpsPoints[0]) return [0, 0];
+    return [files[0].gpsPoints[0].lat, files[0].gpsPoints[0].lon];
+  }, [files]);
 
-  const memoSetCurrentTime = useCallback(
-    (v: number) => setCurrentTime(v),
-    [setCurrentTime],
+  const memoOnSelectPoint = useCallback(
+    (v: { second: number; fileId: number; fileIndex: number }) =>
+      onSelectPoint(v),
+    [onSelectPoint],
   );
 
-  const [markers, setMarkers] = useState<any[]>([]);
+  const [markers, setMarkers] = useState<MarkerWithIcon[]>([]);
   const [addingMode, setAddingMode] = useState(false);
 
-  if (!points.length) {
-    return <div className="text-center text-white">Cargando puntos...</div>;
-  }
+  // 🔥 Crear array con todos los GPS points
+  const allGpsPoints = useMemo<GpsPointWithFile[]>(
+    () =>
+      files.flatMap((file, fileIndex) =>
+        file.gpsPoints.map((p) => ({
+          ...p,
+          fileId: file.id,
+          fileIndex,
+        })),
+      ),
+    [files],
+  );
 
-  const onSelectPosition = (pos: [number, number]) => {
-    setNewPosition(pos);
+  const onSelectPosition = useCallback(
+    (pos: [number, number]) => {
+      let closestDistance = Infinity;
+      let closestLocationMeter: number | null = null;
+
+      for (const loc of projectLocations) {
+        const dist = getDistanceMeters(pos[0], pos[1], loc.lat, loc.lon);
+        if (dist < closestDistance) {
+          closestDistance = dist;
+          closestLocationMeter = loc.meter ?? null;
+        }
+      }
+
+      const referenceMeter =
+        closestLocationMeter !== null ? closestLocationMeter : 0;
+
+      console.log("Referencia meter desde project location:", referenceMeter);
+      setNewPosition([pos[0], pos[1], referenceMeter]);
+      setAddingMode(false);
+    },
+    [projectLocations, setNewPosition, setAddingMode],
+  );
+
+  const onCancelAdding = useCallback(() => {
     setAddingMode(false);
-  };
+  }, []);
 
-  const onCancelAdding = () => {
-    setAddingMode(false);
-  };
-
+  // Cambiar cursor en modo añadir
   useEffect(() => {
     const mapContainer =
       document.querySelector<HTMLDivElement>(".leaflet-container");
 
     if (!mapContainer) return;
 
-    if (addingMode) {
-      mapContainer.style.cursor = "crosshair";
-    } else {
-      mapContainer.style.cursor = "";
-    }
+    mapContainer.style.cursor = addingMode ? "crosshair" : "";
   }, [addingMode]);
+
+  if (!files.length) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-center">
+          <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-blue-500 border-t-transparent"></div>
+          <p className="mt-4 text-gray-600 font-medium">
+            Cargando puntos GPS...
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -556,37 +1013,57 @@ function GpsMap({
         position: "relative",
         height: "100%",
         width: "100%",
-        cursor: addingMode ? "crosshair" : "grab",
       }}
     >
+      <StyleInjector />
+
       <MapContainer
         center={center}
-        zoom={15}
+        zoom={18}
+        maxZoom={21}
+        scrollWheelZoom={true}
+        zoomDelta={0.5}
+        zoomSnap={0.5}
+        wheelDebounceTime={20}
+        wheelPxPerZoomLevel={120}
         style={{ height: "100%", width: "100%" }}
       >
-        <TileLayer url="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}" />
+        <TileLayer
+          url="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}"
+          maxZoom={21}
+          maxNativeZoom={19}
+          noWrap={true}
+        />
 
-        <Polyline
-          positions={polyline}
-          pathOptions={{ color: "black", weight: 10, opacity: 0.3 }}
-        />
-        <Polyline
-          positions={polyline}
-          pathOptions={{ color: "white", weight: 1 }}
-        />
+        <ProjectLocationsLayer locations={projectLocations} />
+
+        {polyline.length > 0 && (
+          <>
+            <Polyline
+              positions={polyline}
+              pathOptions={{ color: "black", weight: 12, opacity: 0.2 }}
+            />
+            <Polyline
+              positions={polyline}
+              pathOptions={{ color: "#3b82f6", weight: 4, opacity: 0.8 }}
+            />
+            <Polyline
+              positions={polyline}
+              pathOptions={{ color: "white", weight: 2, opacity: 0.6 }}
+            />
+          </>
+        )}
+
         {addingMode && (
           <AddMarkerMode
-            canAddMarker={async (pos: [number, number]) => {
-              await new Promise((r) => setTimeout(r, 300));
-              return pos[0] >= 0;
-            }}
             onSelect={onSelectPosition}
             onCancel={onCancelAdding}
           />
         )}
+
         <DraggablePointer
           markers={markers}
-          setMarkers={setMarkers as any}
+          setMarkers={setMarkers}
           addingMode={addingMode}
           setAddingMode={setAddingMode}
         />
@@ -597,21 +1074,20 @@ function GpsMap({
           legend={legend}
           visibleGroups={visibleGroups}
           selectedPosition={selectedPosition}
+          onSelectPoint={onSelectPoint}
           openPreview={(e: any) => {
             setSelectComment(e);
             setOpenPreview(true);
           }}
           visibleTags={visibleTags}
+          allGpsPoints={allGpsPoints}
         />
 
         <MarkerUpdater
-          points={points}
+          files={files}
           currentTime={currentTime}
-          setCurrentTime={memoSetCurrentTime}
+          onSelectPoint={memoOnSelectPoint}
           startKm={startKm}
-          setOpenPreview={setOpenPreview}
-          setSelectComment={setSelectComment}
-          setOpenNewCommentDialog={setOpenNewCommentDialog}
         />
 
         <AddMarkersOnClick
@@ -623,75 +1099,46 @@ function GpsMap({
 
         {markers.map((m) => (
           <Marker key={m.id} position={m.position} icon={m.icon}>
-            <Tooltip></Tooltip>
+            <Tooltip className="custom-tooltip"></Tooltip>
           </Marker>
         ))}
       </MapContainer>
-      {addingMode && (
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            backgroundColor: "rgba(0,0,0,0.5)",
-            zIndex: 500,
-            pointerEvents: "none",
-          }}
-        />
-      )}
-      {addingMode && (
-        <>
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              backgroundColor: "rgba(0,0,0,0.5)",
-              zIndex: 500,
-              pointerEvents: "none",
-            }}
-          />
 
-          <button
-            onClick={() => setAddingMode(false)}
-            style={{
-              position: "absolute",
-              bottom: 20,
-              right: 120,
-              zIndex: 1000,
-              padding: "12px 20px",
-              fontSize: 16,
-              borderRadius: "24px",
-              backgroundColor: "#dc3545",
-              color: "white",
-              border: "none",
-              cursor: "pointer",
-              boxShadow: "0 2px 6px rgba(0,0,0,0.3)",
-            }}
-          >
-            -
-          </button>
-        </>
-      )}
-      {!addingMode && (
+      {addingMode && <div className="adding-mode-overlay" />}
+
+      {addingMode ? (
         <button
-          onClick={() => setAddingMode(true)}
+          onClick={() => setAddingMode(false)}
+          className="map-control-button"
           style={{
             position: "absolute",
             bottom: 20,
             right: 20,
             zIndex: 1000,
-            padding: "12px 20px",
-            fontSize: 16,
-            borderRadius: "24px",
-            backgroundColor: "#007bff",
+            background: "linear-gradient(135deg, #ef4444 0%, #dc2626 100%)",
             color: "white",
-            border: "none",
-            cursor: "pointer",
-            boxShadow: "0 2px 6px rgba(0,0,0,0.3)",
           }}
         >
-          +
+          ✕ Cancelar
+        </button>
+      ) : (
+        <button
+          onClick={() => setAddingMode(true)}
+          className="map-control-button"
+          style={{
+            position: "absolute",
+            bottom: 20,
+            right: 20,
+            zIndex: 1000,
+            background: "linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)",
+            color: "white",
+          }}
+        >
+          + Añadir Marcador
         </button>
       )}
     </div>
   );
 }
+
+export default React.memo(GpsMap);

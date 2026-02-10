@@ -53,6 +53,7 @@ export async function POST(req: NextRequest) {
       parentId,
       createdById,
       tags,
+      referenceMeter,
     } = body;
 
     if (
@@ -68,7 +69,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Crear pointMarker
     const pointMarker = await db.pointMarker.create({
       data: {
         lat,
@@ -79,6 +79,7 @@ export async function POST(req: NextRequest) {
         projectId: projectId ?? null,
         parentId: parentId ?? null,
         createdById,
+        referenceMeter,
         Tags: tags ? tags : [],
       },
     });

@@ -23,6 +23,7 @@ export async function GET(
                 marker: true,
               },
             },
+            locations: true,
           },
         },
       },

@@ -17,11 +17,13 @@ import { useSession } from "next-auth/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
-  File,
+  File as IFile,
   GpsPoint,
   PointMarker,
   Project,
   Tag as Itag,
+  ProjectLocation,
+  VideoCollection,
 } from "@prisma/client";
 import { Sidebar } from "primereact/sidebar";
 import { Button } from "primereact/button";
@@ -31,13 +33,14 @@ const GpsMap = dynamic(() => import("@/app/components/GpsMap"), {
   ssr: false,
 });
 
-export type FileResponse = Omit<File, "tags"> & {
-  gpsPoints: GpsPoint[];
+export type FileResponse = VideoCollection & {
+  files: (IFile & { gpsPoints: GpsPoint[] })[];
   project:
     | (Project & {
         PointMarker: (PointMarker & {
           marker: any;
         })[];
+        locations: ProjectLocation[];
       })
     | null;
   tags: Itag[];
@@ -46,14 +49,22 @@ export type FileResponse = Omit<File, "tags"> & {
 export default function GalleryPreviewPage() {
   const { data: session, status } = useSession();
   const params = useParams();
-  const fileId = useMemo(
+  const videoCollecionId = useMemo(
     () => (params.id ? Number(params.id) : null),
     [params.id],
   );
   const queryClient = useQueryClient();
 
-  // Estados UI y lógicos
-  const [currentTime, setCurrentTime] = useState(0);
+  const [currentTime, onSelectPoint] = useState<{
+    second: number;
+    fileId: number;
+    fileIndex: number;
+  }>({
+    second: 0,
+    fileId: 0,
+    fileIndex: 0,
+  });
+
   const [startKm, setStartKm] = useState(0);
   const [search, setSearch] = useState("");
   const [filteredSuggestions, setFilteredSuggestions] = useState<GpsPoint[]>(
@@ -67,34 +78,27 @@ export default function GalleryPreviewPage() {
     {},
   );
 
-  // ✅ NUEVO: Estado para visibilidad de tags
   const [visibleTags, setVisibleTags] = useState<Record<number, boolean>>({});
-
   const [openPreviewDialog, setOpenPreviewDialog] = useState(false);
   const [openNewCommentDialog, setOpenNewCommentDialog] = useState(false);
   const [selectComment, setSelectComment] = useState<any | null>(null);
-  const [newPosition, setNewPosition] = useState<[number, number] | null>(null);
 
-  // Query para archivo
+  const [newPosition, setNewPosition] = useState<
+    [number, number, number] | null
+  >(null);
+  const [visible, setVisible] = useState(false);
+
   const fileQuery = useQuery<FileResponse, Error>({
-    queryKey: ["file", fileId],
+    queryKey: ["file", videoCollecionId],
     queryFn: async () => {
-      if (!fileId) throw new Error("ID de archivo inválido");
-      const res = await fetch(`/api/file/${fileId}`);
+      if (!videoCollecionId) throw new Error("ID de archivo inválido");
+      const res = await fetch(`/api/video-collection/${videoCollecionId}`);
       if (!res.ok) throw new Error("Error al obtener archivo");
       return res.json();
     },
-    enabled: !!fileId,
+    enabled: !!videoCollecionId,
   });
 
-  // Actualizar startKm cuando cambien los datos
-  useEffect(() => {
-    if (fileQuery.data?.startPlace != null) {
-      setStartKm(Number(fileQuery.data.startPlace));
-    }
-  }, [fileQuery.data]);
-
-  // Query para tags
   const tagsQuery = useQuery<Itag[], Error>({
     queryKey: ["tags"],
     queryFn: async () => {
@@ -104,7 +108,18 @@ export default function GalleryPreviewPage() {
     },
   });
 
-  // ✅ NUEVO: Inicializar visibleTags cuando se carguen los tags
+  const files = useMemo(() => {
+    return fileQuery.data?.files ?? [];
+  }, [fileQuery.data?.files]);
+
+  const selectedFile = useMemo(() => {
+    return files[currentTime.fileIndex];
+  }, [files, currentTime.fileIndex]);
+
+  const videoKey = useMemo(() => {
+    return `video-${selectedFile?.id || 0}`;
+  }, [selectedFile?.id]);
+
   useEffect(() => {
     if (
       tagsQuery.data &&
@@ -117,18 +132,17 @@ export default function GalleryPreviewPage() {
     }
   }, [tagsQuery.data, visibleTags]);
 
-  // Función de búsqueda optimizada
   const searchPoints = useCallback(
     (e: { query: string }) => {
-      if (!fileQuery.data?.gpsPoints) return;
+      if (!selectedFile?.gpsPoints) return;
       const query = e.query.trim().toLowerCase();
-      const results = fileQuery.data.gpsPoints.filter((p) => {
+      const results = selectedFile.gpsPoints.filter((p) => {
         const dist = startKm + p.totalDistance;
         return formatDistance(dist).toLowerCase().includes(query);
       });
       setFilteredSuggestions(results.slice(0, 30));
     },
-    [fileQuery.data?.gpsPoints, startKm],
+    [selectedFile?.gpsPoints, startKm],
   );
 
   const handleSelectLegendPoint = useCallback(
@@ -138,12 +152,137 @@ export default function GalleryPreviewPage() {
     [],
   );
 
-  const [visible, setVisible] = useState(false);
+  const [kmDistance, setKmDistance] = useState<number | "">("");
+  const [mDistance, setMDistance] = useState<number | "">("");
+
+  const haversineMeters = (
+    lat1: number,
+    lon1: number,
+    lat2: number,
+    lon2: number,
+  ) => {
+    const R = 6371000;
+    const toRad = (x: number) => (x * Math.PI) / 180;
+
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+
+    return 2 * R * Math.asin(Math.sqrt(a));
+  };
+
+  const handleSearchClick = useCallback(() => {
+    if (!fileQuery.data?.project?.locations?.length || !files.length) {
+      return;
+    }
+
+    // 1️⃣ km + m → meter absoluto
+    const targetMeter = Number(kmDistance || 0) * 1000 + Number(mDistance || 0);
+
+    // 2️⃣ buscar ProjectLocation más cercano por meter
+    const locations = fileQuery.data.project.locations;
+
+    let closestLocation = locations[0];
+    let minDiff = Math.abs((locations[0].meter ?? 0) - targetMeter);
+
+    for (const loc of locations) {
+      const diff = Math.abs((loc.meter ?? 0) - targetMeter);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closestLocation = loc;
+      }
+    }
+
+    // 3️⃣ juntar TODOS los gps points (todos los videos)
+    const allGpsPoints = files.flatMap((file, fileIndex) =>
+      file.gpsPoints.map((p) => ({
+        ...p,
+        fileId: file.id,
+        fileIndex,
+      })),
+    );
+
+    if (!allGpsPoints.length) return;
+
+    // 4️⃣ buscar GPS point más cercano al project location
+    let closestGpsPoint = allGpsPoints[0];
+    let minDistance = haversineMeters(
+      closestLocation.lat,
+      closestLocation.lon,
+      closestGpsPoint.lat,
+      closestGpsPoint.lon,
+    );
+
+    for (const p of allGpsPoints) {
+      const dist = haversineMeters(
+        closestLocation.lat,
+        closestLocation.lon,
+        p.lat,
+        p.lon,
+      );
+
+      if (dist < minDistance) {
+        minDistance = dist;
+        closestGpsPoint = p;
+      }
+    }
+
+    // 5️⃣ sincronizar video + mapa
+    onSelectPoint({
+      second: closestGpsPoint.second,
+      fileId: closestGpsPoint.fileId,
+      fileIndex: closestGpsPoint.fileIndex,
+    });
+  }, [
+    kmDistance,
+    mDistance,
+    fileQuery.data?.project?.locations,
+    files,
+    onSelectPoint,
+  ]);
 
   const pointsMarkers = useMemo(() => {
     return fileQuery.data?.project?.PointMarker ?? [];
   }, [fileQuery.data?.project?.PointMarker]);
 
+  const handleVideoEnd = useCallback(() => {
+    const nextIndex = currentTime.fileIndex + 1;
+
+    if (nextIndex < files.length) {
+      console.log(`Auto-avanzando al video ${nextIndex + 1}/${files.length}`);
+
+      onSelectPoint({
+        second: 0, // Empezar desde el inicio del siguiente video
+        fileId: files[nextIndex].id,
+        fileIndex: nextIndex,
+      });
+    } else {
+      console.log("Ya es el último video, permaneciendo aquí");
+    }
+  }, [currentTime.fileIndex, files]);
+
+  // 🎮 Navegación manual (opcional)
+  const goToPreviousVideo = useCallback(() => {
+    if (currentTime.fileIndex > 0) {
+      const prevIndex = currentTime.fileIndex - 1;
+      onSelectPoint({
+        second: 0,
+        fileId: files[prevIndex].id,
+        fileIndex: prevIndex,
+      });
+    }
+  }, [currentTime.fileIndex, files]);
+
+  const goToNextVideo = useCallback(() => {
+    if (currentTime.fileIndex < files.length - 1) {
+      handleVideoEnd(); // Reutilizar la misma lógica
+    }
+  }, [currentTime.fileIndex, files.length, handleVideoEnd]);
+
+  // Loading y error states
   if (fileQuery.error)
     return <div>Error cargando archivo: {fileQuery.error.message}</div>;
   if (tagsQuery.error)
@@ -157,44 +296,86 @@ export default function GalleryPreviewPage() {
       <div className="flex flex-1 overflow-hidden w-full">
         <Splitter style={{ height: "100%", width: "100%" }}>
           <SplitterPanel className="w-full flex align-items-center justify-content-center">
-            <div className="flex flex-col w-full ">
-              <div className="w-full p-3 border-b bg-white flex items-center gap-4 shadow-sm rounded-t">
-                <div className="flex flex-col justify-center ">
-                  <h2 className="text-base font-bold text-gray-800 leading-tight">
-                    {fileQuery.data?.fileName ?? "Cargando archivo..."}
-                  </h2>
+            <div className="flex flex-col w-full">
+              <Video360Section
+                key={videoKey}
+                url={selectedFile?.filePath ?? ""}
+                onSelectPoint={onSelectPoint}
+                currentTime={currentTime}
+                points={selectedFile?.gpsPoints ?? []}
+                startKm={startKm}
+                totalFiles={files.length}
+                onVideoEnd={handleVideoEnd}
+              />
 
-                  {fileQuery.data?.startPlace && (
-                    <span className="text-xs text-gray-600 leading-tight">
-                      Inicio:{" "}
-                      <span className="font-semibold">
-                        {fileQuery.data.startPlace}
-                      </span>
+              <div className="w-full p-3 border-b bg-white flex content-between gap-4 shadow-sm rounded-t item-center items-center">
+                <div className="flex content-between">
+                  <h2 className="text-base font-bold text-gray-800 leading-tight">
+                    {fileQuery.data?.name ?? "Cargando archivo..."}
+                  </h2>
+                  {files.length > 1 && (
+                    <span className="text-xs text-gray-500">
+                      Video {currentTime.fileIndex + 1} de {files.length}
                     </span>
                   )}
                 </div>
+                {files.length > 1 && (
+                  <div className="flex gap-2">
+                    <Button
+                      icon="pi pi-chevron-left"
+                      size="small"
+                      outlined
+                      onClick={goToPreviousVideo}
+                      disabled={currentTime.fileIndex === 0}
+                      tooltip="Video anterior"
+                      tooltipOptions={{ position: "bottom" }}
+                    />
+                    <Button
+                      icon="pi pi-chevron-right"
+                      size="small"
+                      outlined
+                      onClick={goToNextVideo}
+                      disabled={currentTime.fileIndex === files.length - 1}
+                      tooltip="Video siguiente"
+                      tooltipOptions={{ position: "bottom" }}
+                    />
+                  </div>
+                )}
 
-                <div className="flex-2 w-full">
-                  <AutoComplete
-                    value={search}
-                    suggestions={filteredSuggestions}
-                    completeMethod={searchPoints}
-                    field=""
-                    itemTemplate={(e) => (
-                      <PointTemplate p={e as any} startKm={startKm} />
-                    )}
-                    onChange={(e) => setSearch(e.value as any)}
-                    onSelect={(e) => {
-                      const p = e.value as GpsPoint;
-                      setSearch(formatDistance(startKm + p.totalDistance));
-                      setCurrentTime(p.second);
-                    }}
-                    className="!w-full"
-                    placeholder="Buscar distancia..."
-                    inputClassName="!w-full text-sm"
+                <div className="w-full flex justify-evenly items-center gap-2">
+                  <div>
+                    <input
+                      type="number"
+                      placeholder="km"
+                      className="border rounded px-2 py-1 text-sm w-32"
+                      value={kmDistance}
+                      onChange={(e) =>
+                        setKmDistance(
+                          e.target.value === "" ? "" : Number(e.target.value),
+                        )
+                      }
+                    />
+                    +
+                    <input
+                      type="number"
+                      placeholder="m"
+                      className="border rounded px-2 py-1 text-sm w-32"
+                      value={mDistance}
+                      onChange={(e) =>
+                        setMDistance(
+                          e.target.value === "" ? "" : Number(e.target.value),
+                        )
+                      }
+                    />
+                  </div>
+
+                  <Button
+                    label="Buscar"
+                    onClick={handleSearchClick}
+                    size="small"
+                    disabled={kmDistance === "" && mDistance === ""}
                   />
                 </div>
-
                 <div>
                   {fileQuery.data?.tags?.map((tag) => (
                     <Tag
@@ -209,16 +390,9 @@ export default function GalleryPreviewPage() {
                   ))}
                 </div>
               </div>
-
-              <Video360Section
-                url={fileQuery.data?.fileName ?? ""}
-                currentTime={currentTime}
-                setCurrentTime={setCurrentTime}
-                points={fileQuery.data?.gpsPoints ?? []}
-                startKm={startKm}
-              />
             </div>
           </SplitterPanel>
+
           <SplitterPanel className="w-full flex align-items-center justify-content-center">
             <div className="w-full relative bg-white border-l h-full flex flex-col overflow-auto">
               <Sidebar
@@ -233,10 +407,11 @@ export default function GalleryPreviewPage() {
                   onSelectPosition={handleSelectLegendPoint}
                   visibleGroups={visibleGroups}
                   setVisibleGroups={setVisibleGroups}
-                  visibleTags={visibleTags} // ✅ NUEVO
-                  setVisibleTags={setVisibleTags} // ✅ NUEVO
+                  visibleTags={visibleTags}
+                  setVisibleTags={setVisibleTags}
                 />
               </Sidebar>
+
               <Button
                 style={{
                   zIndex: 1000,
@@ -246,31 +421,33 @@ export default function GalleryPreviewPage() {
                 }}
                 size="small"
                 severity="info"
-                icon="pi  pi-align-justify"
+                icon="pi pi-align-justify"
                 onClick={() => setVisible(true)}
               />
 
-              <div className="shadow-lg  rounded-xl w-full h-full flex-1 min-h-0">
+              <div className="shadow-lg rounded-xl w-full h-full flex-1 min-h-0">
                 <GpsMap
                   newPosition={newPosition}
                   setNewPosition={setNewPosition}
                   visibleGroups={visibleGroups}
                   legend={pointsMarkers}
                   startKm={startKm}
-                  setCurrentTime={setCurrentTime}
-                  points={fileQuery.data?.gpsPoints ?? []}
+                  onSelectPoint={onSelectPoint}
+                  files={files}
                   currentTime={currentTime}
                   selectedPosition={selectedLegendPoint}
                   setOpenPreview={setOpenPreviewDialog}
                   setSelectComment={setSelectComment}
                   setOpenNewCommentDialog={setOpenNewCommentDialog}
-                  visibleTags={visibleTags} // ✅ NUEVO
+                  visibleTags={visibleTags}
+                  projectLocations={fileQuery.data?.project?.locations || []}
                 />
               </div>
             </div>
           </SplitterPanel>
         </Splitter>
 
+        {/* Diálogos */}
         <CommentPreviewDialog
           visible={openPreviewDialog}
           pointMarker={selectComment}
@@ -301,7 +478,9 @@ export default function GalleryPreviewPage() {
               if (!res.ok) throw new Error("Error creando respuesta");
 
               setOpenPreviewDialog(false);
-              queryClient.invalidateQueries({ queryKey: ["file", fileId] });
+              queryClient.invalidateQueries({
+                queryKey: ["file", videoCollecionId],
+              });
             } catch (error) {
               console.error("Error en submit respuesta:", error);
             }
@@ -334,6 +513,7 @@ export default function GalleryPreviewPage() {
                   markerId: marker?.id,
                   lat: newPosition?.[0],
                   lon: newPosition?.[1],
+                  referenceMeter: newPosition?.[2],
                   tags,
                 }),
               });
@@ -341,7 +521,9 @@ export default function GalleryPreviewPage() {
               if (!res.ok) throw new Error("Error creando comentario");
 
               setOpenNewCommentDialog(false);
-              queryClient.invalidateQueries({ queryKey: ["file", fileId] });
+              queryClient.invalidateQueries({
+                queryKey: ["file", videoCollecionId],
+              });
             } catch (error) {
               console.error("Error en submit comentario:", error);
             }

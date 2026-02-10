@@ -12,28 +12,20 @@ interface GpsPointDB {
   segmentDistance: number;
   totalDistance: number;
 }
-interface GpxPointWithIndex {
-  lat: number;
-  lon: number;
-  ele: number;
-  time: string;
-  secondIndex: number;
-}
 
 async function handleRequest(
   req: Request,
-): Promise<[string, string, string, string, number, number[]]> {
+): Promise<[string, string, number, number, number[]]> {
   const json = await req.json();
 
   const file = String(json.fileKey ?? "");
   const gps = String(json.gpsKey ?? "");
-  const fileName = String(json.fileName ?? "");
-  const startPlace = String(json.startPlace ?? "");
-  const projectId = Number(json.projectId ?? "");
+  const order = Number(json.order ?? "");
+  const collectionId = Number(json.collectionId);
 
   const tagIds = json.tagIds ?? [];
 
-  return [file, gps, fileName, startPlace, projectId, tagIds];
+  return [file, gps, order, collectionId, tagIds];
 }
 
 async function updateInDatabase(
@@ -76,30 +68,24 @@ async function updateInDatabase(
 }
 async function saveToDatabase(
   mp4FilePath: string,
-  fileName: string,
-  startPlace: number,
   cleanGPS: GpsPointDB[],
-  projectId: number,
   tagIds: number[],
+  order: number,
+  collectionId: number,
 ): Promise<{ fileId: number; totalDistance: number }> {
-  const mp4FileName = path.basename(mp4FilePath);
-
   const fileRecord = await db.file.create({
     data: {
-      fileName: mp4FileName,
       filePath: mp4FilePath,
-      projectId,
       duration: 30,
-      startPlace,
-      tags: tagIds,
+      tagIds: tagIds,
+      order,
+      collectionId,
     },
   });
 
-  // Calcula la distancia total del último punto
   const totalDistance =
     cleanGPS.length > 0 ? cleanGPS[cleanGPS.length - 1].totalDistance : 0;
 
-  // 2. Insertar los puntos GPS
   if (cleanGPS.length > 0) {
     await db.$executeRaw`
       INSERT INTO "GpsPoint" ("lat", "lon", "second", "segmentDistance", "totalDistance", "fileId")
@@ -123,7 +109,7 @@ function haversineDistance(
 ): number {
   const toRad = (x: number) => (x * Math.PI) / 180;
 
-  const R = 6371000; // radio tierra en metros
+  const R = 6371000;
   const dLat = toRad(lat2 - lat1);
   const dLon = toRad(lon2 - lon1);
 
@@ -135,34 +121,31 @@ function haversineDistance(
 
   return R * c;
 }
-
 function parseGpxAndCalculateDistances(gpxString: string): GpsPointDB[] {
   const parser = new XMLParser({
     ignoreAttributes: false,
     attributeNamePrefix: "",
   });
-
   const gpxObj = parser.parse(gpxString);
   const trkpts = gpxObj.gpx?.trk?.trkseg?.trkpt;
-
   if (!trkpts) return [];
 
   const points = Array.isArray(trkpts) ? trkpts : [trkpts];
-
   const result: GpsPointDB[] = [];
-  const seenSeconds = new Set<string>();
+  const seenTimestamps = new Set<string>();
+
   let totalDistance = 0;
   let previousPoint: { lat: number; lon: number } | null = null;
-  let secondIndex = 0;
+  let timeIndex = 0;
 
   for (const pt of points) {
     const lat = parseFloat(pt.lat);
     const lon = parseFloat(pt.lon);
     const time = pt.time;
-    const secondKey = time.slice(0, 19);
 
-    if (!seenSeconds.has(secondKey)) {
+    if (!seenTimestamps.has(time)) {
       let segmentDistance = 0;
+
       if (previousPoint) {
         segmentDistance = haversineDistance(
           previousPoint.lat,
@@ -176,76 +159,35 @@ function parseGpxAndCalculateDistances(gpxString: string): GpsPointDB[] {
       result.push({
         lat,
         lon,
-        second: secondIndex,
+        second: timeIndex,
         segmentDistance,
         totalDistance,
       });
 
-      seenSeconds.add(secondKey);
+      seenTimestamps.add(time);
       previousPoint = { lat, lon };
-      secondIndex++;
+      timeIndex++;
     }
   }
 
   return result;
 }
-
-function parseGpxAndFilterBySecondIndexed(
-  gpxString: string,
-): GpxPointWithIndex[] {
-  const parser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: "",
-  });
-
-  const gpxObj = parser.parse(gpxString);
-  const trkpts = gpxObj.gpx?.trk?.trkseg?.trkpt;
-
-  if (!trkpts) return [];
-
-  const points = Array.isArray(trkpts) ? trkpts : [trkpts];
-
-  const filteredPoints: GpxPointWithIndex[] = [];
-  const seenSeconds = new Set<string>();
-  let index = 0;
-
-  for (const pt of points) {
-    const lat = parseFloat(pt.lat);
-    const lon = parseFloat(pt.lon);
-    const ele = parseFloat(pt.ele);
-    const time = pt.time;
-    const secondKey = time.slice(0, 19);
-
-    if (!seenSeconds.has(secondKey)) {
-      filteredPoints.push({ lat, lon, ele, time, secondIndex: index });
-      seenSeconds.add(secondKey);
-      index++;
-    }
-  }
-
-  return filteredPoints;
-}
-
 export async function POST(req: Request) {
   try {
-    const [fileKey, gpsKey, fileName, startPlace, projectId, tagIds] =
+    const [fileKey, gpsKey, order, collectionId, tagIds] =
       await handleRequest(req);
-
-    console.log(handleRequest(req));
 
     const originalFilePath = fileKey;
     const key = `${gpsKey}`;
     const gpxContent = await getFileContent(key);
-    const gpsPoints = parseGpxAndFilterBySecondIndexed(gpxContent);
     const gpsPointsWithDistances = parseGpxAndCalculateDistances(gpxContent);
 
     const { fileId, totalDistance } = await saveToDatabase(
       originalFilePath,
-      fileName,
-      Number(startPlace),
       gpsPointsWithDistances,
-      projectId,
       tagIds,
+      order,
+      collectionId,
     );
     return NextResponse.json({
       ok: true,
@@ -275,13 +217,10 @@ export async function PUT(req: Request) {
       );
     }
 
-    // Similar lógica que en POST pero para actualizar
     const gpxContent = gpsKey ? await getFileContent(gpsKey) : null;
     const gpsPointsWithDistances = gpxContent
       ? parseGpxAndCalculateDistances(gpxContent)
       : [];
-
-    // Actualizar registro en DB
 
     const updated = await updateInDatabase(
       id,
