@@ -6,6 +6,7 @@ import View360, { ControlBar, EquirectProjection } from "@egjs/view360";
 import ResumenCoordinates from "./resumen-coordinates";
 import { GpsPoint } from "@prisma/client";
 import CustomControls from "./CustomControls";
+import VideoPlaybackControls from "./VideoPlaybackControls";
 
 export interface GpxPoint {
   id: number;
@@ -367,17 +368,12 @@ const Video360Section = React.memo(
           >
             {videoUrl && <source src={videoUrl} type="video/mp4" />}
           </video>
-        </div>
 
-        {/* <CustomControls */}
-        {/*   videoRef={videoRef} */}
-        {/*   currentTime={currentTime} */}
-        {/*   onSelectPoint={onSelectPoint} */}
-        {/* /> */}
+          <VideoPlaybackControls videoRef={videoRef as any} step={10} />
+        </div>
       </div>
     );
   },
-  // Comparador personalizado para evitar re-renders innecesarios
   (prevProps, nextProps) => {
     return (
       prevProps.url === nextProps.url &&
