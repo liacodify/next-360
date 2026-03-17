@@ -28,6 +28,29 @@ async function handleRequest(
   return [file, gps, order, collectionId, tagIds];
 }
 
+// Max bind variables in Postgres prepared statements = 32767
+// Each GPS row uses 6 columns → max safe rows per batch = floor(32767 / 6) = 5461
+// Using 5000 to stay safely under the limit
+const GPS_CHUNK_SIZE = 5000;
+
+async function insertGpsPoints(
+  gpsPoints: GpsPointDB[],
+  fileId: number,
+): Promise<void> {
+  for (let i = 0; i < gpsPoints.length; i += GPS_CHUNK_SIZE) {
+    const chunk = gpsPoints.slice(i, i + GPS_CHUNK_SIZE);
+    await db.$executeRaw`
+      INSERT INTO "GpsPoint" ("lat", "lon", "second", "segmentDistance", "totalDistance", "fileId")
+      VALUES ${Prisma.join(
+        chunk.map(
+          (p) =>
+            Prisma.sql`(${p.lat}, ${p.lon}, ${p.second}, ${p.segmentDistance}, ${p.totalDistance}, ${fileId})`,
+        ),
+      )}
+    `;
+  }
+}
+
 async function updateInDatabase(
   fileId: number,
   mp4FilePath: string | undefined,
@@ -38,7 +61,6 @@ async function updateInDatabase(
   tagIds?: number[],
 ): Promise<boolean> {
   const updateData: any = {};
-
   if (fileName) updateData.fileName = path.basename(fileName);
   if (mp4FilePath) updateData.filePath = mp4FilePath;
   if (startPlace) updateData.startPlace = startPlace;
@@ -52,20 +74,12 @@ async function updateInDatabase(
 
   if (cleanGPS && cleanGPS.length > 0) {
     await db.gpsPoint.deleteMany({ where: { fileId } });
-
-    await db.$executeRaw`
-      INSERT INTO "GpsPoint" ("lat", "lon", "second", "segmentDistance", "totalDistance", "fileId")
-      VALUES ${Prisma.join(
-        cleanGPS.map(
-          (p) =>
-            Prisma.sql`(${p.lat}, ${p.lon}, ${p.second}, ${p.segmentDistance}, ${p.totalDistance}, ${fileId})`,
-        ),
-      )}
-    `;
+    await insertGpsPoints(cleanGPS, fileId);
   }
 
   return true;
 }
+
 async function saveToDatabase(
   mp4FilePath: string,
   cleanGPS: GpsPointDB[],
@@ -87,20 +101,11 @@ async function saveToDatabase(
     cleanGPS.length > 0 ? cleanGPS[cleanGPS.length - 1].totalDistance : 0;
 
   if (cleanGPS.length > 0) {
-    await db.$executeRaw`
-      INSERT INTO "GpsPoint" ("lat", "lon", "second", "segmentDistance", "totalDistance", "fileId")
-      VALUES ${Prisma.join(
-        cleanGPS.map(
-          (p) =>
-            Prisma.sql`(${p.lat}, ${p.lon}, ${p.second}, ${p.segmentDistance}, ${p.totalDistance}, ${fileRecord.id})`,
-        ),
-      )}
-    `;
+    await insertGpsPoints(cleanGPS, fileRecord.id);
   }
 
   return { fileId: fileRecord.id, totalDistance };
 }
-
 function haversineDistance(
   lat1: number,
   lon1: number,
