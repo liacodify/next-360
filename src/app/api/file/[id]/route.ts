@@ -43,3 +43,38 @@ export async function GET(
     );
   }
 }
+
+export async function DELETE(
+  request: NextRequest,
+  context: { params: Promise<{ id: string }> },
+) {
+  const params = await context.params;
+  const id = Number(params.id);
+
+  if (isNaN(id)) {
+    return NextResponse.json({ error: "ID inválido" }, { status: 400 });
+  }
+
+  try {
+    await db.$transaction(async (tx) => {
+      // 1. borrar gpsPoints primero (FK depende de File)
+      await tx.gpsPoint.deleteMany({
+        where: { fileId: id },
+      });
+
+      // 2. borrar el file
+      await tx.file.delete({
+        where: { id },
+      });
+    });
+
+    return NextResponse.json({ message: "Archivo eliminado correctamente" });
+  } catch (error) {
+    console.error("Error deleting file:", error);
+
+    return NextResponse.json(
+      { error: "Error al eliminar archivo" },
+      { status: 500 },
+    );
+  }
+}
