@@ -43,7 +43,7 @@ async function updateInDatabase(
   if (mp4FilePath) updateData.filePath = mp4FilePath;
   if (startPlace) updateData.startPlace = startPlace;
   if (projectId !== undefined) updateData.projectId = projectId;
-  if (tagIds) updateData.tags = tagIds;
+  if (tagIds) updateData.tagIds = tagIds;
 
   await db.file.update({
     where: { id: fileId },
